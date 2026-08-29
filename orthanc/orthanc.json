@@ -1,0 +1,53 @@
+{
+  "Name": "RadioLinQ-Clone-PACS",
+
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": true,
+
+  "HttpPort": 8042,
+  "DicomPort": 4242,
+  "DicomAet": "RADIOLINQ",
+
+  "//": "Accept every C-STORE association during local development",
+  "DicomAlwaysAllowStore": true,
+  "DicomAlwaysAllowEcho": true,
+  "UnknownSopClassAccepted": true,
+
+  "//storage": "Keep pixel data as received; DICOMweb serves it and can transcode",
+  "StorageCompression": false,
+  "IngestTranscoding": "",
+
+  "PostgreSQL": {
+    "EnableIndex": true,
+    "EnableStorage": false,
+    "Host": "postgres",
+    "Port": 5432,
+    "Database": "orthanc",
+    "Username": "radiolinq",
+    "Password": "change-me-postgres"
+  },
+
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/",
+    "EnableWado": true,
+    "WadoRoot": "/wado",
+    "Ssl": false,
+    "StowMaxInstances": 0,
+    "StowMaxSize": 0,
+    "MetadataWorkerThreadsCount": 4,
+    "EnableMetadataCache": true
+  },
+
+  "//cors": "The API proxy adds CORS headers, but allow direct browser access too",
+  "HttpHeaders": {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Origin,Accept,Content-Type,Authorization,Cache-Control"
+  },
+
+  "JobsHistorySize": 100,
+  "SaveJobs": false,
+  "ConcurrentJobs": 4,
+  "HttpTimeout": 120
+}

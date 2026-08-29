@@ -1,0 +1,262 @@
+// Imperative wrapper around a single Cornerstone3D RenderingEngine.
+// React components hand it DOM elements + desired state; it reconciles.
+
+import * as cornerstone from '@cornerstonejs/core';
+import * as csTools from '@cornerstonejs/tools';
+import { ensureToolGroup, resolveToolName, TOOL_GROUP_ID } from './tools';
+import type { LoadedSeries, ProjectionMode } from './store';
+
+const { RenderingEngine, Enums, volumeLoader, setVolumesForViewports, getRenderingEngine } =
+  cornerstone;
+const { ViewportType, OrientationAxis, BlendModes } = Enums;
+const { ToolGroupManager } = csTools;
+const cine = (csTools.utilities as any).cine as {
+  playClip: (el: HTMLElement, opts: { framesPerSecond: number }) => void;
+  stopClip: (el: HTMLElement) => void;
+};
+
+export const ENGINE_ID = 'RADIOLINQ_ENGINE';
+export const MPR_VIEWPORTS = ['MPR_AXIAL', 'MPR_SAGITTAL', 'MPR_CORONAL'] as const;
+
+const ORIENTATION: Record<(typeof MPR_VIEWPORTS)[number], unknown> = {
+  MPR_AXIAL: OrientationAxis.AXIAL,
+  MPR_SAGITTAL: OrientationAxis.SAGITTAL,
+  MPR_CORONAL: OrientationAxis.CORONAL,
+};
+
+const BLEND: Record<ProjectionMode, unknown> = {
+  none: BlendModes.COMPOSITE,
+  mip: BlendModes.MAXIMUM_INTENSITY_BLEND,
+  minip: BlendModes.MINIMUM_INTENSITY_BLEND,
+  average: (BlendModes as any).AVERAGE_INTENSITY_BLEND ?? BlendModes.COMPOSITE,
+};
+
+function engine(): cornerstone.RenderingEngine {
+  return (
+    (getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined) ??
+    new RenderingEngine(ENGINE_ID)
+  );
+}
+
+export function stackViewportId(index: number): string {
+  return `STACK_${index}`;
+}
+
+/** volumeId for a series (streaming loader scheme). */
+function volumeIdFor(seriesUid: string): string {
+  return `cornerstoneStreamingImageVolume:${seriesUid}`;
+}
+
+// --- Stack (2D) grid --------------------------------------------------------
+
+export interface StackCell {
+  index: number;
+  element: HTMLDivElement;
+  series?: LoadedSeries;
+}
+
+export async function renderStackGrid(cells: StackCell[]): Promise<void> {
+  const re = engine();
+  const group = ensureToolGroup();
+
+  // Tear down MPR viewports if present.
+  for (const id of MPR_VIEWPORTS) {
+    try {
+      group.removeViewports(ENGINE_ID, id);
+      re.disableElement(id);
+    } catch {
+      /* not enabled */
+    }
+  }
+
+  const viewportInput = cells.map((c) => ({
+    viewportId: stackViewportId(c.index),
+    type: ViewportType.STACK,
+    element: c.element,
+    defaultOptions: { background: [0, 0, 0] as [number, number, number] },
+  }));
+
+  re.setViewports(viewportInput);
+
+  for (const c of cells) {
+    const vpId = stackViewportId(c.index);
+    group.addViewport(vpId, ENGINE_ID);
+    const vp = re.getViewport(vpId) as cornerstone.Types.IStackViewport;
+    if (c.series?.imageIds.length) {
+      await vp.setStack(c.series.imageIds, 0);
+      vp.render();
+    }
+  }
+  re.render();
+}
+
+// --- MPR ------------------------------------------------------------------
+
+export async function enterMpr(series: LoadedSeries, elements: {
+  axial: HTMLDivElement;
+  sagittal: HTMLDivElement;
+  coronal: HTMLDivElement;
+}): Promise<void> {
+  const re = engine();
+  const group = ensureToolGroup();
+
+  // Disable any stack viewports.
+  for (const vp of re.getViewports()) {
+    if (vp.id.startsWith('STACK_')) {
+      try {
+        group.removeViewports(ENGINE_ID, vp.id);
+        re.disableElement(vp.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const elMap: Record<(typeof MPR_VIEWPORTS)[number], HTMLDivElement> = {
+    MPR_AXIAL: elements.axial,
+    MPR_SAGITTAL: elements.sagittal,
+    MPR_CORONAL: elements.coronal,
+  };
+
+  re.setViewports(
+    MPR_VIEWPORTS.map((id) => ({
+      viewportId: id,
+      type: ViewportType.ORTHOGRAPHIC,
+      element: elMap[id],
+      defaultOptions: {
+        orientation: ORIENTATION[id] as never,
+        background: [0, 0, 0] as [number, number, number],
+      },
+    })) as never,
+  );
+
+  const volumeId = volumeIdFor(series.seriesInstanceUid);
+  let volume = cornerstone.cache.getVolume(volumeId);
+  if (!volume) {
+    volume = await volumeLoader.createAndCacheVolume(volumeId, {
+      imageIds: series.imageIds,
+    });
+  }
+  (volume as { load: () => void }).load();
+
+  await setVolumesForViewports(re, [{ volumeId }], [...MPR_VIEWPORTS]);
+
+  for (const id of MPR_VIEWPORTS) {
+    group.addViewport(id, ENGINE_ID);
+  }
+
+  // Crosshairs on primary in MPR.
+  const crosshairs = resolveToolName('Crosshairs');
+  if (crosshairs) {
+    try {
+      group.setToolActive(crosshairs, {
+        bindings: [{ mouseButton: csTools.Enums.MouseBindings.Primary }],
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  re.renderViewports([...MPR_VIEWPORTS]);
+}
+
+export function exitMpr(): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  if (!re) return;
+  const group = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+  for (const id of MPR_VIEWPORTS) {
+    try {
+      group?.removeViewports(ENGINE_ID, id);
+      re.disableElement(id);
+    } catch {
+      /* ignore */
+    }
+  }
+  const crosshairs = resolveToolName('Crosshairs');
+  if (crosshairs && group) {
+    try {
+      group.setToolPassive(crosshairs);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function applySlab(projection: ProjectionMode, slabMm: number): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  if (!re) return;
+  for (const id of MPR_VIEWPORTS) {
+    const vp = re.getViewport(id) as cornerstone.Types.IVolumeViewport | undefined;
+    if (!vp) continue;
+    try {
+      (vp as any).setBlendMode(BLEND[projection]);
+      (vp as any).setSlabThickness(projection === 'none' ? 0.1 : Math.max(slabMm, 0.1));
+      vp.render();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+// --- Shared viewport ops -------------------------------------------------
+
+export function setInvert(invert: boolean): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  re?.getViewports().forEach((vp) => {
+    try {
+      (vp as any).setProperties({ invert });
+      vp.render();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+export function rotate(deg: number): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const vp = re?.getViewports().find((v) => v.id.startsWith('STACK_')) as
+    | cornerstone.Types.IStackViewport
+    | undefined;
+  if (!vp) return;
+  const cur = (vp.getViewPresentation?.() as any)?.rotation ?? 0;
+  (vp as any).setViewPresentation?.({ rotation: (cur + deg) % 360 });
+  vp.render();
+}
+
+export function resetActive(viewportId: string): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const vp = re?.getViewport(viewportId);
+  (vp as any)?.resetCamera?.();
+  (vp as any)?.resetProperties?.();
+  vp?.render();
+}
+
+export function playCine(viewportId: string, fps: number): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const el = re?.getViewport(viewportId)?.element;
+  if (el) cine.playClip(el, { framesPerSecond: fps });
+}
+
+export function stopCine(viewportId: string): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const el = re?.getViewport(viewportId)?.element;
+  if (el) cine.stopClip(el);
+}
+
+export function captureViewportPng(viewportId: string): string | null {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const vp = re?.getViewport(viewportId);
+  const canvas = (vp as any)?.getCanvas?.() as HTMLCanvasElement | undefined;
+  return canvas ? canvas.toDataURL('image/png') : null;
+}
+
+export function getViewportCanvas(viewportId: string): HTMLCanvasElement | null {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const vp = re?.getViewport(viewportId);
+  return ((vp as any)?.getCanvas?.() as HTMLCanvasElement) ?? null;
+}
+
+export function destroyEngine(): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  re?.destroy();
+}

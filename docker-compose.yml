@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-radiolinq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-orthanc}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-radiolinq}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  orthanc:
+    image: orthancteam/orthanc:24.10.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ORTHANC_HTTP_PORT:-8042}:8042"
+      - "${ORTHANC_DICOM_PORT:-4242}:4242"
+    environment:
+      ORTHANC__POSTGRESQL__HOST: postgres
+      ORTHANC__POSTGRESQL__PORT: 5432
+      ORTHANC__POSTGRESQL__DATABASE: ${POSTGRES_DB:-orthanc}
+      ORTHANC__POSTGRESQL__USERNAME: ${POSTGRES_USER:-radiolinq}
+      ORTHANC__POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres}
+      ORTHANC__REGISTERED_USERS: |
+        {"${ORTHANC_USERNAME:-radiolinq}": "${ORTHANC_PASSWORD:-change-me-orthanc}"}
+    volumes:
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+      - orthanc-storage:/var/lib/orthanc/db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8042/system || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      PORT: 3000
+      ORTHANC_URL: ${ORTHANC_URL:-http://orthanc:8042}
+      ORTHANC_USERNAME: ${ORTHANC_USERNAME:-radiolinq}
+      ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:-change-me-orthanc}
+      CORS_ORIGIN: "*"
+    develop:
+      watch:
+        - path: ./apps/api/src
+          target: /app/src
+          action: sync
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:3000}
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-5173}:80"
+
+volumes:
+  pgdata:
+  orthanc-storage:

@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+.next/
+coverage/
+*.log
+npm-debug.log*
+
+# env
+.env
+.env.local
+.env.*.local
+
+# sample DICOM data — never commit PHI
+sample-data/*
+!sample-data/.gitkeep
+
+# orthanc / postgres volumes if bind-mounted
+.data/
+orthanc-db/
+pgdata/
+
+# editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,32 @@
+{
+  "name": "@radiolinq/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@cornerstonejs/core": "^5.8.2",
+    "@cornerstonejs/dicom-image-loader": "^5.8.2",
+    "@cornerstonejs/tools": "^5.8.2",
+    "antd": "^5.21.2",
+    "dicom-parser": "^1.8.21",
+    "dicomweb-client": "^0.10.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "events": "^3.3.0",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}
