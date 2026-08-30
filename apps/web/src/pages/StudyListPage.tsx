@@ -27,7 +27,9 @@ export function StudyListPage() {
       .then(setRows)
       .catch((e) => message.error(String(e)))
       .finally(() => setLoading(false));
-  }, [message]);
+    // run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();

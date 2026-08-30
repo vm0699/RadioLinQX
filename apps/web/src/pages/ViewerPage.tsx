@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Spin, Button, Tooltip } from 'antd';
 import { initCornerstone } from '../dicom/cornerstoneInit';
-import { getSeriesImageIds } from '../dicom/imageIds';
+import { loadSeriesImageIds } from '../dicom/imageIds';
 import { api } from '../api/client';
 import { useViewer, type LoadedSeries } from '../viewer/store';
 import { registerTools, ensureToolGroup, resolveToolName } from '../viewer/tools';
@@ -38,6 +38,7 @@ export function ViewerPage() {
           return;
         }
 
+        const mode = await api.getMode();
         const wanted = new Set(seriesCsv.split(',').filter(Boolean));
         const allSeries = await api.listSeries(studyUid);
         const chosen = allSeries.filter((s) => wanted.has(s.seriesInstanceUid));
@@ -48,12 +49,18 @@ export function ViewerPage() {
 
         const loaded: LoadedSeries[] = [];
         for (const s of chosen) {
-          const { imageIds } = await getSeriesImageIds(studyUid, s.seriesInstanceUid);
+          const { imageIds } = await loadSeriesImageIds(
+            mode,
+            studyUid,
+            s.seriesInstanceUid,
+          );
           loaded.push({ ...s, studyInstanceUid: studyUid, imageIds });
         }
 
-        // patient/study header from the first study row
-        const studyRow = (await api.listStudies({ StudyInstanceUID: studyUid }))[0];
+        // patient/study header
+        const studyRow = (await api.listStudies({ StudyInstanceUID: studyUid })).find(
+          (s) => s.studyInstanceUid === studyUid,
+        );
 
         useViewer.setState({
           studyInstanceUid: studyUid,

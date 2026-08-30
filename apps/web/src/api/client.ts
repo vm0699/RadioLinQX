@@ -1,7 +1,11 @@
-// Thin client for the NestJS API (flattened study/series lists).
+// Thin client for the NestJS API. Works against either backend:
+//  - 'orthanc' → /api/studies (QIDO proxy), wadors: imageIds
+//  - 'local'   → /api/local/studies (sample-data files), wadouri: imageIds
 
 const API_BASE =
   typeof __API_BASE__ !== 'undefined' && __API_BASE__ ? __API_BASE__ : '';
+
+export type BackendMode = 'orthanc' | 'local' | 'none';
 
 export interface StudySummary {
   studyInstanceUid: string;
@@ -28,6 +32,11 @@ export interface SeriesSummary {
   instanceCount?: number;
 }
 
+export interface LocalInstanceRef {
+  sopInstanceUid: string;
+  numberOfFrames: number;
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { Accept: 'application/json' },
@@ -36,12 +45,45 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+let modePromise: Promise<BackendMode> | null = null;
+export function getMode(): Promise<BackendMode> {
+  if (!modePromise) {
+    modePromise = get<{ mode: BackendMode }>('/api/mode')
+      .then((r) => r.mode)
+      .catch(() => 'none' as BackendMode);
+  }
+  return modePromise;
+}
+
+const base = (mode: BackendMode) => (mode === 'local' ? '/api/local' : '/api');
+
 export const api = {
-  listStudies: (params: Record<string, string> = {}) => {
+  getMode,
+
+  listStudies: async (params: Record<string, string> = {}) => {
+    const mode = await getMode();
     const qs = new URLSearchParams(params).toString();
-    return get<StudySummary[]>(`/api/studies${qs ? `?${qs}` : ''}`);
+    return get<StudySummary[]>(
+      `${base(mode)}/studies${mode === 'local' ? '' : qs ? `?${qs}` : ''}`,
+    );
   },
-  listSeries: (studyUid: string) =>
-    get<SeriesSummary[]>(`/api/studies/${encodeURIComponent(studyUid)}/series`),
+
+  listSeries: async (studyUid: string) => {
+    const mode = await getMode();
+    return get<SeriesSummary[]>(
+      `${base(mode)}/studies/${encodeURIComponent(studyUid)}/series`,
+    );
+  },
+
+  /** local mode only: ordered instance refs for a series */
+  listLocalInstances: (studyUid: string, seriesUid: string) =>
+    get<LocalInstanceRef[]>(
+      `/api/local/studies/${encodeURIComponent(studyUid)}/series/${encodeURIComponent(
+        seriesUid,
+      )}/instances`,
+    ),
+
   health: () => get<{ status: string; orthanc: boolean }>(`/api/health`),
 };
+
+export { API_BASE };

@@ -1,10 +1,12 @@
-// Build ordered WADO-RS imageIds for a series and register per-instance
-// metadata with the dicom-image-loader so Cornerstone can render without a
-// second round-trip.
+// Build ordered imageIds for a series, for whichever backend is active:
+//  - orthanc → WADO-RS metadata + `wadors:` imageIds (metadata pre-registered)
+//  - local   → `wadouri:` imageIds pointing at /api/local/wado/:sop
+//              (the wadouri loader fetches + parses the file itself)
 
 import { api as dicomwebApi } from 'dicomweb-client';
 import * as dicomImageLoader from '@cornerstonejs/dicom-image-loader';
 import { dicomWeb } from './config';
+import { api, API_BASE, type BackendMode } from '../api/client';
 
 const TAG = {
   SOPInstanceUID: '00080018',
@@ -20,9 +22,10 @@ function firstValue(inst: DicomJsonInstance, tag: string): unknown {
   return inst?.[tag]?.Value?.[0];
 }
 
-/** Sort by ImagePositionPatient projection when available, else InstanceNumber. */
 function sortInstances(instances: DicomJsonInstance[]): DicomJsonInstance[] {
-  const withPos = instances.every((i) => Array.isArray(firstValue(i, TAG.ImagePositionPatient) as unknown));
+  const withPos = instances.every((i) =>
+    Array.isArray(firstValue(i, TAG.ImagePositionPatient) as unknown),
+  );
   if (!withPos) {
     return [...instances].sort(
       (a, b) =>
@@ -30,7 +33,6 @@ function sortInstances(instances: DicomJsonInstance[]): DicomJsonInstance[] {
         Number(firstValue(b, TAG.InstanceNumber) ?? 0),
     );
   }
-  // Project position onto the scan axis (approx: use the component that varies most).
   const positions = instances.map(
     (i) => (i[TAG.ImagePositionPatient]?.Value as number[]) ?? [0, 0, 0],
   );
@@ -51,7 +53,9 @@ export interface SeriesImageIds {
   seriesInstanceUid: string;
 }
 
-export async function getSeriesImageIds(
+// --- orthanc / WADO-RS ---------------------------------------------------
+
+async function getSeriesImageIdsWadoRs(
   studyInstanceUid: string,
   seriesInstanceUid: string,
 ): Promise<SeriesImageIds> {
@@ -65,15 +69,18 @@ export async function getSeriesImageIds(
   })) as DicomJsonInstance[];
 
   const ordered = sortInstances(instances);
-
-  const wadors = (dicomImageLoader as unknown as {
-    wadors: { metaDataManager: { add: (id: string, md: unknown) => void } };
-  }).wadors;
+  const wadors = (
+    dicomImageLoader as unknown as {
+      wadors: { metaDataManager: { add: (id: string, md: unknown) => void } };
+    }
+  ).wadors;
 
   const imageIds: string[] = [];
   for (const inst of ordered) {
     const sop = String(firstValue(inst, TAG.SOPInstanceUID));
-    const seriesUid = String(firstValue(inst, TAG.SeriesInstanceUID) ?? seriesInstanceUid);
+    const seriesUid = String(
+      firstValue(inst, TAG.SeriesInstanceUID) ?? seriesInstanceUid,
+    );
     const frames = Number(firstValue(inst, TAG.NumberOfFrames) ?? 1) || 1;
     for (let frame = 1; frame <= frames; frame++) {
       const imageId =
@@ -83,6 +90,38 @@ export async function getSeriesImageIds(
       imageIds.push(imageId);
     }
   }
-
   return { imageIds, studyInstanceUid, seriesInstanceUid };
+}
+
+// --- local files / WADO-URI --------------------------------------------
+
+async function getSeriesImageIdsLocal(
+  studyInstanceUid: string,
+  seriesInstanceUid: string,
+): Promise<SeriesImageIds> {
+  const refs = await api.listLocalInstances(studyInstanceUid, seriesInstanceUid);
+  const imageIds: string[] = [];
+  for (const r of refs) {
+    const url = `${API_BASE}/api/local/wado/${encodeURIComponent(r.sopInstanceUid)}`;
+    if (r.numberOfFrames > 1) {
+      for (let f = 1; f <= r.numberOfFrames; f++) {
+        imageIds.push(`wadouri:${url}?frame=${f}`);
+      }
+    } else {
+      imageIds.push(`wadouri:${url}`);
+    }
+  }
+  return { imageIds, studyInstanceUid, seriesInstanceUid };
+}
+
+// --- dispatcher --------------------------------------------------------
+
+export async function loadSeriesImageIds(
+  mode: BackendMode,
+  studyInstanceUid: string,
+  seriesInstanceUid: string,
+): Promise<SeriesImageIds> {
+  return mode === 'local'
+    ? getSeriesImageIdsLocal(studyInstanceUid, seriesInstanceUid)
+    : getSeriesImageIdsWadoRs(studyInstanceUid, seriesInstanceUid);
 }

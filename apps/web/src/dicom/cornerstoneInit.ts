@@ -33,7 +33,13 @@ export function initCornerstone(): Promise<void> {
 
     // DICOM image loader: wires cornerstone + dicomParser, registers the
     // wadors/wadouri image loaders + metadata providers, starts the worker pool.
-    dicomImageLoaderInit({ maxWebWorkers: MAX_WEB_WORKERS });
+    // `useLegacyMetadataProvider` keeps the classic wadouri path (parse a raw
+    // P10 file, read pixel data) — the v5 "naturalized metadata" path can't
+    // extract pixels from uncompressed local files.
+    dicomImageLoaderInit({
+      maxWebWorkers: MAX_WEB_WORKERS,
+      useLegacyMetadataProvider: true,
+    });
 
     await toolsInit();
   })();
