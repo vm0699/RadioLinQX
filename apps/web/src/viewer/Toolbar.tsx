@@ -198,8 +198,8 @@ export function Toolbar() {
           value={st.slabThicknessMm}
           disabled={!st.mpr}
           onChange={(v) => v != null && st.set('slabThicknessMm', v)}
-          style={{ width: 68 }}
-          addonAfter="mm"
+          style={{ width: 64 }}
+          suffix="mm"
         />
       </div>
 

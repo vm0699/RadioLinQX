@@ -2,72 +2,80 @@
 
 _Updated: 2026-08-30_
 
-## Done
+## Verified working — end to end, against real DICOM
 
-| Component | State |
+Because Docker Desktop won't start on this machine (see below), verification was
+done in **local mode**: the API serves the DICOM files under `sample-data/`
+directly and the viewer loads them with `wadouri:` imageIds. Same viewer code
+path as Orthanc mode.
+
+Sample data used: a real **384-slice T1 MRI** (datalad/example-dicom-structural)
+plus single-file **XA / US / RF** demos.
+
+| Area | Evidence |
 |---|---|
-| Monorepo scaffold (`apps/web`, `apps/api`, `orthanc/`, `scripts/`, compose) | ✅ |
-| **web** — Vite + React + TS + Ant Design + **Cornerstone3D v5.8** | ✅ builds, typechecks, runs (`npm run dev`) |
-| **api** — NestJS DICOMweb reverse-proxy + `/api/studies` (flattened QIDO) | ✅ builds, runs, graceful when Orthanc down |
-| Study list page (table, search, series dialog with multi-select "View Selected") | ✅ renders |
-| Viewer shell (topbar: brand / Refresh / Clinical history; loader; error state) | ✅ renders |
-| Cornerstone bootstrap — core init, DICOM image loader + web workers, tools, streaming volume loader | ✅ `CornerstoneRender: using GPU rendering` |
-| Tool registry — all 20 tools registered; ToolGroup wiring | ✅ (fixed dev-mode module-instance / ordering issue) |
-| Toolbar — Cases / Stack / Zoom / Pan / W-L / Rotate / Measure▾ (11 tools) / Delete / Grid (3×3) / Localizer / MPR / Cross / Ax-Cor-Sag / slab slider + mm / projection (None/MIP/MinIP/Avg) / Play + fps / Capture / Export Video | ✅ built |
-| ViewerGrid — stack grid reconciliation, MPR enter/exit, slab/projection, invert, drag-drop series | ✅ built |
-| Overlay — patient block, corner readouts (dims, slice, instance#, series#, zoom, W/L), A/P/L/R markers | ✅ built |
-| Docker Compose (postgres + orthanc + api + web) | ✅ written, **not yet run** |
-| `scripts/load-dicom.sh` — STOW-RS upload of `sample-data/` (public fallback) | ✅ written, not yet run |
+| API local mode | `GET /api/mode` → `{"mode":"local"}`; `GET /api/local/studies` → 6 studies with correct patient / modality / series+instance counts |
+| Study list page | renders all 6 studies, correct columns |
+| Viewer boot | `CornerstoneRender: using GPU rendering`, all 20 tools registered into the ToolGroup |
+| **Stack rendering** | real pixel data decodes — overlay shows parsed values: RF study `1024 x 1024`; MRI `274 x 384`, `Slice 0.67 mm`, `Img 1/384`, `Ser 401`, `W 99 L 50` |
+| `/api/local/wado/:sop` | returns valid `application/dicom` bytes, `200` |
+| **MPR** | MPR button → 3-pane `AXIAL / SAGITTAL / CORONAL` layout; the streaming volume loader fetched **all 384 slices** (`200 OK` each) and assembled the volume, no errors |
+| Toolbar | full control set renders: Stack/Zoom/Pan/W-L/Rotate, Measure▾ (11 tools), Delete, Grid (3×3), Localizer, MPR, Cross, Ax/Cor/Sag, slab slider + mm, projection (None/MIP/MinIP/Average), Play + fps, Capture, Export Video |
 
-## Blocked / not yet verified
+**Not yet exercised interactively:** dragging MPR crosshairs, thick-slab MIP
+visual result, cine playback, each annotation tool, layout grid, capture/video
+export. These are wired; they need a hands-on pass (best in a real browser — the
+in-app preview pane can't screenshot while hidden and reloads under the volume
+load).
 
-1. **Docker Desktop on this machine is crashing on start** ("Inference manager … remove `dockerInference`: file cannot be accessed"). Until it starts, Orthanc/Postgres can't come up, so:
-   - no real study list
-   - image pixels / MPR / thick-slab **not yet exercised against real DICOM**
-2. The viewer has been smoke-tested only with a fake study id (shell + cornerstone init verified; pixel path not).
+## Both backends
 
-### Fixing Docker Desktop
+`vite.config.ts` / `apps/api` support two DICOM sources, chosen at runtime via
+`GET /api/mode`:
 
-Try, in order:
-```powershell
-# 1. fully quit Docker Desktop (tray → Quit), then:
-wsl --shutdown
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Docker\run"
-# 2. relaunch Docker Desktop
-```
-If it still crashes: Docker Desktop → (if it opens) Settings → **Features in development** → turn **off** "Docker Model Runner" / "Docker AI"; or Settings → **Troubleshoot → Reset to factory defaults**.
+| mode | when | study/series source | imageIds |
+|---|---|---|---|
+| `orthanc` | Orthanc reachable | `/api/studies` (QIDO proxy) | `wadors:` |
+| `local` | Orthanc down, `sample-data/` has files | `/api/local/studies` (parsed with dicom-parser) | `wadouri:` |
+| `none` | neither | — | — |
+
+Key fix: `dicomImageLoaderInit({ useLegacyMetadataProvider: true })` — the
+Cornerstone v5 "naturalized metadata" `wadouri` path can't pull pixels from
+uncompressed local files; the legacy path (parse P10 → read pixel data) works.
+
+## Docker Desktop
+
+Still broken on this machine. Tried: stopping wedged processes, `wsl --shutdown`,
+clearing `%LOCALAPPDATA%\Docker\run`, setting `"EnableDockerAI": false` in
+`%APPDATA%\Docker\settings-store.json` (backup at `settings-store.json.bak`),
+relaunch. The crash dialog is gone but the Linux engine never becomes ready
+(`docker info` hangs). Needs a factory reset / reinstall / `wsl --update` + reboot
+— destructive or your call, so not done.
 
 Once `docker info` works:
 ```bash
-cd C:/SAVRO/RadioLinQ
-cp .env.example .env
+cd C:/SAVRO/RadioLinQ && cp .env.example .env
 docker compose up -d --build
-./scripts/load-dicom.sh          # add a CT/MR series to sample-data/ first for MPR
-# open http://localhost:5173
+./scripts/load-dicom.sh          # uploads sample-data/ into Orthanc
 ```
+`GET /api/mode` then flips to `orthanc` automatically; the viewer switches to
+`wadors:` with no code change.
 
-## Local dev without the web container
+## Run it now (local mode, no Docker)
 
 ```bash
-docker compose up -d postgres orthanc      # once Docker is healthy
-cd apps/api && npm install && npm run build && PORT=3000 node dist/main.js
-cd apps/web && npm install && npm run dev   # http://localhost:5173
+# API
+cd apps/api && npm install && npm run build
+SAMPLE_DIR="C:/SAVRO/RadioLinQ/sample-data" PORT=3000 node dist/main.js
+# web
+cd apps/web && npm install && npm run dev      # http://localhost:5173
 ```
+`sample-data/` already has the MRI + demo studies (git-ignored). Open the app,
+click a study's **View series**, tick the series, **View Selected**, then **MPR**.
 
-## Known dev-mode notes
+## Next
 
-- Cornerstone3D v5 is split into many `@cornerstonejs/*` packages that share
-  singleton state. `vite.config.ts` pins `optimizeDeps` (exclude
-  `dicom-image-loader` for its worker; pre-bundle core/tools + the 4 wasm codec
-  subpaths) and `resolve.dedupe`. Production `vite build` (Rollup) is
-  unaffected.
-- Harmless console warnings remain: "For crosshairs to operate, at least two
-  viewports…" (only relevant in MPR) and a React Router v7 future-flag notice.
-
-## Next after images render
-
-- Verify: stack scroll, W/L, zoom/pan, each annotation tool, grid layouts,
-  MPR 3-plane + linked crosshairs, thick-slab MIP, cine, capture/video.
-- Then move up the stack: auth, cases list + filters + presets, Add Case,
-  reporting editor, referring doctors, chat, notifications, TAT/SLA, upload
-  pipeline (per `docs/original-app-analysis.md`).
+- Interactive pass on every viewer tool (real browser).
+- Then up the stack: auth, cases list + filters + presets, Add Case, report
+  editor, referring doctors, chat, notifications, TAT/SLA, upload pipeline
+  (per `docs/original-app-analysis.md`).
