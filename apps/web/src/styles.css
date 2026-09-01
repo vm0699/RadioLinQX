@@ -1,5 +1,7 @@
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* AntD <App> inserts a wrapper div — keep the 100% height chain intact */
+#root > .ant-app { height: 100%; }
 body {
   background: #0b0d12;
   color: #e6e8ee;
@@ -100,7 +102,7 @@ body {
 .viewer-grid.mpr { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr; }
 .viewport-cell {
   position: relative; background: #000; overflow: hidden;
-  border: 1px solid transparent;
+  border: 1px solid transparent; min-height: 0; min-width: 0;
 }
 .viewport-cell.active { border-color: #d98c1a; }
 .viewport-label {

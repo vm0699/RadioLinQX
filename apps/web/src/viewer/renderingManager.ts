@@ -84,10 +84,17 @@ export async function renderStackGrid(cells: StackCell[]): Promise<void> {
     const vp = re.getViewport(vpId) as cornerstone.Types.IStackViewport;
     if (c.series?.imageIds.length) {
       await vp.setStack(c.series.imageIds, 0);
+      try {
+        (vp as any).resetCamera?.();
+      } catch {
+        /* ignore */
+      }
       vp.render();
     }
   }
   re.render();
+  // canvas often isn't at its final size on the first paint
+  setTimeout(() => resizeEngine(), 50);
 }
 
 // --- MPR ------------------------------------------------------------------
@@ -254,6 +261,26 @@ export function getViewportCanvas(viewportId: string): HTMLCanvasElement | null 
   const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
   const vp = re?.getViewport(viewportId);
   return ((vp as any)?.getCanvas?.() as HTMLCanvasElement) ?? null;
+}
+
+export function resizeEngine(keepCamera = false): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  if (!re) return;
+  try {
+    (re as any).resize?.(true, keepCamera);
+    if (!keepCamera) {
+      for (const vp of re.getViewports()) {
+        try {
+          (vp as any).resetCamera?.();
+        } catch {
+          /* ignore */
+        }
+      }
+      re.render();
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function destroyEngine(): void {

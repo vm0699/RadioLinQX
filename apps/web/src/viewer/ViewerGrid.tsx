@@ -6,6 +6,7 @@ import {
   exitMpr,
   applySlab,
   setInvert,
+  resizeEngine,
   stackViewportId,
   MPR_VIEWPORTS,
   type StackCell,
@@ -31,6 +32,7 @@ export function ViewerGrid() {
 
   const stackRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const mprRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   // --- Stack grid reconciliation ---
   useEffect(() => {
@@ -49,6 +51,27 @@ export function ViewerGrid() {
     }
     if (cells.length) void renderStackGrid(cells);
   }, [mpr, layout.rows, layout.cols, assignments, series]);
+
+  // --- keep Cornerstone canvases matched to the container size ---
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => resizeEngine());
+    });
+    ro.observe(el);
+    // a couple of nudges once layout has settled after mount / mode switch
+    const t1 = setTimeout(resizeEngine, 100);
+    const t2 = setTimeout(resizeEngine, 600);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [mpr]);
 
   // --- MPR enter/exit ---
   useEffect(() => {
@@ -90,7 +113,7 @@ export function ViewerGrid() {
       MPR_CORONAL: 'CORONAL',
     };
     return (
-      <div className="viewer-grid mpr">
+      <div className="viewer-grid mpr" ref={gridRef}>
         {MPR_VIEWPORTS.map((id) => (
           <div key={id} className="viewport-cell">
             <div className="viewport-label">{labels[id]}</div>
@@ -109,6 +132,7 @@ export function ViewerGrid() {
   return (
     <div
       className="viewer-grid"
+      ref={gridRef}
       style={{
         gridTemplateRows: `repeat(${layout.rows}, 1fr)`,
         gridTemplateColumns: `repeat(${layout.cols}, 1fr)`,
