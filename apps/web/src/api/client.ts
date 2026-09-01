@@ -1,12 +1,11 @@
-// Thin client for the NestJS API. Works against either backend:
-//  - 'orthanc' → /api/studies (QIDO proxy), wadors: imageIds
-//  - 'local'   → /api/local/studies (sample-data files), wadouri: imageIds
+// API client — DICOM (viewer) + dashboard (cases, directory, settings, notifs).
 
 const API_BASE =
   typeof __API_BASE__ !== 'undefined' && __API_BASE__ ? __API_BASE__ : '';
 
 export type BackendMode = 'orthanc' | 'local' | 'none';
 
+// ---------- DICOM / viewer ----------
 export interface StudySummary {
   studyInstanceUid: string;
   patientId?: string;
@@ -14,7 +13,6 @@ export interface StudySummary {
   patientSex?: string;
   patientBirthDate?: string;
   studyDate?: string;
-  studyTime?: string;
   accessionNumber?: string;
   studyDescription?: string;
   modalities?: string;
@@ -22,7 +20,6 @@ export interface StudySummary {
   seriesCount?: number;
   instanceCount?: number;
 }
-
 export interface SeriesSummary {
   seriesInstanceUid: string;
   seriesNumber?: number;
@@ -31,19 +28,135 @@ export interface SeriesSummary {
   bodyPart?: string;
   instanceCount?: number;
 }
-
 export interface LocalInstanceRef {
   sopInstanceUid: string;
   numberOfFrames: number;
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { Accept: 'application/json' },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
-  return res.json() as Promise<T>;
+// ---------- dashboard ----------
+export type CaseStatus = 'UNREAD' | 'ASSIGNED' | 'DRAFT' | 'REPORTED';
+export type TatStatus = 'ON_TIME' | 'DUE_SOON' | 'OVERDUE' | 'REPORTED';
+
+export interface CaseReport {
+  clinicalHistory: string;
+  technique: string;
+  findings: string;
+  impression: string;
+  updatedAt: string;
+  signedBy?: string;
+  signedAt?: string;
 }
+export interface CaseView {
+  id: string;
+  caseNumber: string;
+  patientId: string;
+  patientName: string;
+  patientAge?: number;
+  patientSex?: string;
+  patientMobile?: string;
+  scanType: string;
+  bodyParts: string[];
+  studyDescription?: string;
+  contrast?: 'Yes' | 'No';
+  branchId?: string;
+  referringDoctorId?: string;
+  referringDoctorName?: string;
+  referringDoctorMobile?: string;
+  patientHistory?: string;
+  remarks?: string;
+  tags: string[];
+  status: CaseStatus;
+  assignedRadiologistId?: string;
+  assignedRadiologistName?: string;
+  uploadedAt: string;
+  dueAt: string;
+  reportedAt?: string;
+  uploadStatus: 'COMPLETE' | 'IN_PROGRESS' | 'PARTIAL';
+  imageCount: number;
+  seriesCount: number;
+  hasImages: boolean;
+  studyInstanceUid?: string;
+  seriesInstanceUids?: string[];
+  report?: CaseReport;
+  tatStatus: TatStatus;
+  timeElapsedMs: number;
+  timeRemainingMs: number;
+}
+export interface CaseListResult {
+  total: number;
+  page: number;
+  perPage: number;
+  rows: CaseView[];
+}
+export interface FilterPreset {
+  id: string;
+  name: string;
+  query: Record<string, string>;
+  createdAt: string;
+}
+export interface Radiologist {
+  id: string;
+  name: string;
+  email: string;
+  specialties: string[];
+  active: boolean;
+}
+export interface Branch {
+  id: string;
+  name: string;
+  code: string;
+  address?: string;
+}
+export interface AppSettings {
+  id: 'app';
+  scanCenter: { name: string; aet: string; contactEmail: string; contactPhone: string };
+  branches: Branch[];
+  scanTypes: string[];
+  bodyParts: string[];
+  tags: string[];
+  radiologists: Radiologist[];
+  tat: { targetHoursByScanType: Record<string, number>; statWindowHours: number };
+}
+export interface ReferringDoctor {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  hospital?: string;
+  speciality?: string;
+  casesReferred: number;
+  createdAt: string;
+}
+export interface Notification {
+  id: string;
+  type: 'NEW_CASE' | 'ASSIGNED' | 'REPORT_READY' | 'OVERDUE' | 'CHAT';
+  title: string;
+  body: string;
+  caseId?: string;
+  at: string;
+  read: boolean;
+}
+
+// ---------- transport ----------
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    ...init,
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`${res.status} ${res.statusText} — ${path}${txt ? ` — ${txt.slice(0, 200)}` : ''}`);
+  }
+  return (res.status === 204 ? undefined : res.json()) as Promise<T>;
+}
+const get = <T>(p: string) => req<T>(p);
+const post = <T>(p: string, body?: unknown) =>
+  req<T>(p, { method: 'POST', body: body == null ? undefined : JSON.stringify(body) });
+const patch = <T>(p: string, body: unknown) =>
+  req<T>(p, { method: 'PATCH', body: JSON.stringify(body) });
+const put = <T>(p: string, body: unknown) =>
+  req<T>(p, { method: 'PUT', body: JSON.stringify(body) });
+const del = <T>(p: string) => req<T>(p, { method: 'DELETE' });
 
 let modePromise: Promise<BackendMode> | null = null;
 export function getMode(): Promise<BackendMode> {
@@ -55,35 +168,60 @@ export function getMode(): Promise<BackendMode> {
   return modePromise;
 }
 
-const base = (mode: BackendMode) => (mode === 'local' ? '/api/local' : '/api');
-
 export const api = {
   getMode,
+  health: () => get<{ status: string; orthanc: boolean }>('/api/health'),
 
-  listStudies: async (params: Record<string, string> = {}) => {
+  // viewer
+  listSeriesFor: async (studyUid: string) => {
     const mode = await getMode();
-    const qs = new URLSearchParams(params).toString();
-    return get<StudySummary[]>(
-      `${base(mode)}/studies${mode === 'local' ? '' : qs ? `?${qs}` : ''}`,
-    );
+    const base = mode === 'local' ? '/api/local' : '/api';
+    return get<SeriesSummary[]>(`${base}/studies/${encodeURIComponent(studyUid)}/series`);
   },
-
-  listSeries: async (studyUid: string) => {
-    const mode = await getMode();
-    return get<SeriesSummary[]>(
-      `${base(mode)}/studies/${encodeURIComponent(studyUid)}/series`,
-    );
-  },
-
-  /** local mode only: ordered instance refs for a series */
   listLocalInstances: (studyUid: string, seriesUid: string) =>
     get<LocalInstanceRef[]>(
-      `/api/local/studies/${encodeURIComponent(studyUid)}/series/${encodeURIComponent(
-        seriesUid,
-      )}/instances`,
+      `/api/local/studies/${encodeURIComponent(studyUid)}/series/${encodeURIComponent(seriesUid)}/instances`,
     ),
 
-  health: () => get<{ status: string; orthanc: boolean }>(`/api/health`),
+  // cases
+  listCases: (q: Record<string, string> = {}) =>
+    get<CaseListResult>(`/api/cases?${new URLSearchParams(q)}`),
+  caseStats: (q: Record<string, string> = {}) =>
+    get<{ all: number; reported: number; pending: number }>(
+      `/api/cases/stats?${new URLSearchParams(q)}`,
+    ),
+  getCase: (id: string) => get<CaseView>(`/api/cases/${id}`),
+  createCase: (body: Partial<CaseView>) => post<CaseView>('/api/cases', body),
+  updateCase: (id: string, body: Partial<CaseView>) => patch<CaseView>(`/api/cases/${id}`, body),
+  assignCase: (id: string, radiologistId: string) =>
+    post<CaseView>(`/api/cases/${id}/assign`, { radiologistId }),
+  saveReport: (id: string, report: Partial<CaseReport>, action: 'save' | 'sign') =>
+    put<CaseView>(`/api/cases/${id}/report`, { report, action }),
+  deleteCase: (id: string) => del<{ ok: boolean }>(`/api/cases/${id}`),
+
+  // presets
+  listPresets: () => get<FilterPreset[]>('/api/cases/presets'),
+  createPreset: (name: string, query: Record<string, string>) =>
+    post<FilterPreset>('/api/cases/presets', { name, query }),
+  deletePreset: (id: string) => del<{ ok: boolean }>(`/api/cases/presets/${id}`),
+
+  // settings
+  getSettings: () => get<AppSettings>('/api/settings'),
+  updateSettings: (body: Partial<AppSettings>) => patch<AppSettings>('/api/settings', body),
+
+  // referring doctors
+  listReferrers: () => get<ReferringDoctor[]>('/api/referring-doctors'),
+  createReferrer: (body: Partial<ReferringDoctor>) =>
+    post<ReferringDoctor>('/api/referring-doctors', body),
+  updateReferrer: (id: string, body: Partial<ReferringDoctor>) =>
+    patch<ReferringDoctor>(`/api/referring-doctors/${id}`, body),
+  deleteReferrer: (id: string) => del<{ ok: boolean }>(`/api/referring-doctors/${id}`),
+
+  // notifications
+  listNotifications: () => get<Notification[]>('/api/notifications'),
+  notifUnread: () => get<{ count: number }>('/api/notifications/unread-count'),
+  notifReadAll: () => post<{ ok: boolean }>('/api/notifications/read-all'),
+  notifRead: (id: string) => post<{ ok: boolean }>(`/api/notifications/${id}/read`),
 };
 
 export { API_BASE };

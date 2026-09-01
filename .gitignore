@@ -25,3 +25,7 @@ pgdata/
 .idea/
 .DS_Store
 Thumbs.db
+
+# JSON store (dev database)
+/data/
+apps/api/data/

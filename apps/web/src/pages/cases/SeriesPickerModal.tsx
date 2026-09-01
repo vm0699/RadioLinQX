@@ -1,43 +1,44 @@
 import { useEffect, useState } from 'react';
 import { Modal, Checkbox, Button, Spin, Empty } from 'antd';
-import { api, type SeriesSummary, type StudySummary } from '../api/client';
+import { api, type CaseView, type SeriesSummary } from '../../api/client';
 
-export function SeriesDialog({
-  study,
-  open,
+export function SeriesPickerModal({
+  theCase,
   onClose,
   onView,
 }: {
-  study: StudySummary | null;
-  open: boolean;
+  theCase: CaseView | null;
   onClose: () => void;
-  onView: (study: StudySummary, series: SeriesSummary[]) => void;
+  onView: (seriesUids: string[]) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [series, setSeries] = useState<SeriesSummary[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!open || !study) return;
+    if (!theCase?.studyInstanceUid) return;
     setLoading(true);
     setChecked(new Set());
     api
-      .listSeries(study.studyInstanceUid)
-      .then((s) => setSeries(s))
+      .listSeriesFor(theCase.studyInstanceUid)
+      .then((s) => {
+        setSeries(s);
+        setChecked(new Set(s.map((x) => x.seriesInstanceUid))); // preselect all
+      })
       .finally(() => setLoading(false));
-  }, [open, study]);
+  }, [theCase]);
 
   const toggle = (uid: string) =>
     setChecked((prev) => {
-      const next = new Set(prev);
-      next.has(uid) ? next.delete(uid) : next.add(uid);
-      return next;
+      const n = new Set(prev);
+      n.has(uid) ? n.delete(uid) : n.add(uid);
+      return n;
     });
 
   return (
     <Modal
-      title={`Series — ${study?.patientName ?? ''}`}
-      open={open}
+      title={`Series — ${theCase?.patientName ?? ''}`}
+      open={!!theCase}
       onCancel={onClose}
       footer={null}
       width={560}
@@ -46,15 +47,10 @@ export function SeriesDialog({
         type="primary"
         disabled={checked.size === 0}
         style={{ marginBottom: 12 }}
-        onClick={() => {
-          if (!study) return;
-          const chosen = series.filter((s) => checked.has(s.seriesInstanceUid));
-          onView(study, chosen);
-        }}
+        onClick={() => onView([...checked])}
       >
         View Selected ({checked.size})
       </Button>
-
       {loading ? (
         <Spin />
       ) : series.length === 0 ? (
@@ -62,16 +58,7 @@ export function SeriesDialog({
       ) : (
         <div className="series-list">
           {series.map((s) => (
-            <label
-              key={s.seriesInstanceUid}
-              className="series-row"
-              onClick={(e) => {
-                // let the checkbox handle its own click
-                if ((e.target as HTMLElement).tagName !== 'INPUT') {
-                  toggle(s.seriesInstanceUid);
-                }
-              }}
-            >
+            <label key={s.seriesInstanceUid} className="series-row">
               <Checkbox
                 checked={checked.has(s.seriesInstanceUid)}
                 onChange={() => toggle(s.seriesInstanceUid)}

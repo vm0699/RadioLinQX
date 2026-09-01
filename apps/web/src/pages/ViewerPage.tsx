@@ -14,11 +14,13 @@ import * as csTools from '@cornerstonejs/tools';
 export function ViewerPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const caseId = params.get('case') ?? '';
   const studyUid = params.get('study') ?? '';
   const seriesCsv = params.get('series') ?? '';
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [clinical, setClinical] = useState<string>('');
   const bootRef = useRef(false);
 
   const store = useViewer();
@@ -40,8 +42,10 @@ export function ViewerPage() {
 
         const mode = await api.getMode();
         const wanted = new Set(seriesCsv.split(',').filter(Boolean));
-        const allSeries = await api.listSeries(studyUid);
-        const chosen = allSeries.filter((s) => wanted.has(s.seriesInstanceUid));
+        const allSeries = await api.listSeriesFor(studyUid);
+        const chosen = wanted.size
+          ? allSeries.filter((s) => wanted.has(s.seriesInstanceUid))
+          : allSeries;
         if (chosen.length === 0) {
           setError('None of the requested series were found.');
           return;
@@ -57,21 +61,28 @@ export function ViewerPage() {
           loaded.push({ ...s, studyInstanceUid: studyUid, imageIds });
         }
 
-        // patient/study header
-        const studyRow = (await api.listStudies({ StudyInstanceUID: studyUid })).find(
-          (s) => s.studyInstanceUid === studyUid,
-        );
+        // patient/study header — from the case when we have one
+        let patient = {} as Record<string, string | undefined>;
+        if (caseId) {
+          try {
+            const c = await api.getCase(caseId);
+            patient = {
+              name: c.patientName,
+              id: c.patientId,
+              sex: c.patientSex,
+              birthDate: c.patientAge != null ? `${c.patientAge}y` : undefined,
+              studyDescription: c.studyDescription,
+              studyDate: c.uploadedAt?.slice(0, 10),
+            };
+            setClinical(c.patientHistory ?? '');
+          } catch {
+            /* fall through */
+          }
+        }
 
         useViewer.setState({
           studyInstanceUid: studyUid,
-          patient: {
-            name: studyRow?.patientName,
-            id: studyRow?.patientId,
-            sex: studyRow?.patientSex,
-            birthDate: studyRow?.patientBirthDate,
-            studyDescription: studyRow?.studyDescription,
-            studyDate: studyRow?.studyDate,
-          },
+          patient,
           series: loaded,
           layout: { rows: 1, cols: 1 },
           assignments: [loaded[0]?.seriesInstanceUid],
@@ -83,7 +94,7 @@ export function ViewerPage() {
         setError(String(e));
       }
     })();
-  }, [studyUid, seriesCsv]);
+  }, [studyUid, seriesCsv, caseId]);
 
   // Crosshairs / ReferenceLines toggles. Crosshairs needs >= 2 viewports, so it
   // only makes sense once MPR is active and the 3 ortho viewports are attached.
@@ -139,7 +150,7 @@ export function ViewerPage() {
           </Button>
         </Tooltip>
         <div className="spacer" />
-        <Tooltip title="Clinical history (from referring doctor) — no data">
+        <Tooltip title={clinical || 'Clinical history (from referring doctor) — no data'}>
           <Button size="small">Clinical history</Button>
         </Tooltip>
       </div>
