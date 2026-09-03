@@ -13,13 +13,14 @@ export class OrthancService {
 
   constructor() {
     this.http = axios.create({
-      baseURL: config.orthancUrl,
+      baseURL: config.orthancUrl || undefined,
       auth: { username: config.orthancUser, password: config.orthancPass },
-      timeout: 30_000,
+      timeout: 5_000,
     });
   }
 
   async ping(): Promise<boolean> {
+    if (!config.orthancEnabled) return false;
     try {
       await this.http.get('/system');
       return true;

@@ -1,0 +1,24 @@
+# Render Blueprint — the API service, native Node (no Docker).
+# Render → New + → Blueprint → connect this repo → Apply.
+# After that, every push to the default branch auto-redeploys.
+services:
+  - type: web
+    name: radiolinq-api
+    runtime: node
+    plan: free
+    rootDir: apps/api
+    # devDeps (nest CLI, typescript) are needed to build
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: node dist/main.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # No Orthanc in the hosted deploy → API serves sample-data/ in "local" mode.
+      # SAMPLE_DIR default resolves to <repo>/sample-data automatically.
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+      # Lock to your Vercel URL after the frontend is up, e.g. https://radiolinq.vercel.app
+      - key: CORS_ORIGIN
+        value: "*"

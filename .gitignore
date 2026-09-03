@@ -11,9 +11,10 @@ npm-debug.log*
 .env.local
 .env.*.local
 
-# sample DICOM data — never commit PHI
-sample-data/*
-!sample-data/.gitkeep
+# Sample DICOM. The committed set is public, de-identified test data
+# (datalad example T1 MRI + rubomedical XA/US/RF demos) so the hosted
+# deployment has something to show. NEVER add real patient data here.
+sample-data/*.tmp
 
 # orthanc / postgres volumes if bind-mounted
 .data/

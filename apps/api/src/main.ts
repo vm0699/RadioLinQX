@@ -26,38 +26,43 @@ async function bootstrap() {
   });
 
   // --- DICOMweb reverse proxy -------------------------------------------------
-  // Everything under /dicom-web is streamed straight to Orthanc. Multipart
-  // WADO-RS responses pass through untouched. This is the seam where per-user
-  // auth / audit logging will live once the dashboard exists.
+  // Only mounted when an Orthanc is configured. In the hosted deploy there is
+  // no Orthanc and the frontend uses /api/local/* (mode "local") instead.
   const orthancAuth =
     'Basic ' +
     Buffer.from(`${config.orthancUser}:${config.orthancPass}`).toString('base64');
 
-  app.use(
-    '/dicom-web',
-    createProxyMiddleware({
-      target: config.orthancUrl,
-      changeOrigin: true,
-      pathRewrite: { '^/dicom-web': '/dicom-web' },
-      headers: { Authorization: orthancAuth },
-      on: {
-        proxyRes: (proxyRes) => {
-          proxyRes.headers['access-control-allow-origin'] = '*';
+  if (config.orthancEnabled) {
+    app.use(
+      '/dicom-web',
+      createProxyMiddleware({
+        target: config.orthancUrl,
+        changeOrigin: true,
+        pathRewrite: { '^/dicom-web': '/dicom-web' },
+        headers: { Authorization: orthancAuth },
+        on: {
+          proxyRes: (proxyRes) => {
+            proxyRes.headers['access-control-allow-origin'] = '*';
+          },
+          error: (err, _req, res) => {
+            log.error(`DICOMweb proxy error: ${err.message}`);
+            if ('writeHead' in res && !res.headersSent) {
+              (res as any).writeHead(502, { 'Content-Type': 'text/plain' });
+            }
+            (res as any).end?.('Bad gateway (Orthanc unreachable)');
+          },
         },
-        error: (err, _req, res) => {
-          log.error(`DICOMweb proxy error: ${err.message}`);
-          if ('writeHead' in res && !res.headersSent) {
-            (res as any).writeHead(502, { 'Content-Type': 'text/plain' });
-          }
-          (res as any).end?.('Bad gateway (Orthanc unreachable)');
-        },
-      },
-    }),
-  );
+      }),
+    );
+  }
 
   await app.listen(config.port, '0.0.0.0');
   log.log(`API listening on :${config.port}`);
-  log.log(`DICOMweb proxied to ${config.orthancUrl}/dicom-web`);
+  log.log(
+    config.orthancEnabled
+      ? `DICOMweb proxied to ${config.orthancUrl}/dicom-web`
+      : `no Orthanc configured — serving sample-data in local mode`,
+  );
 }
 
 bootstrap();

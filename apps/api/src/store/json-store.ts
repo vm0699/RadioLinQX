@@ -3,7 +3,8 @@ import * as path from 'path';
 
 /** Directory where the JSON "database" files live (override with DATA_DIR). */
 export function dataDir(): string {
-  return process.env.DATA_DIR ?? path.resolve(__dirname, '../../../data');
+  // dist/store/json-store.js -> up 4 -> <repo>/data  (matches sample-data resolution)
+  return process.env.DATA_DIR ?? path.resolve(__dirname, '../../../../data');
 }
 
 /**
