@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Spin, Button, Tooltip } from 'antd';
+import { Spin, Button, Tooltip, ConfigProvider, theme as antdTheme } from 'antd';
+
+const DARK = {
+  algorithm: antdTheme.darkAlgorithm,
+  token: {
+    colorPrimary: '#3B82F6',
+    colorBgBase: '#0B1220',
+    borderRadius: 8,
+    fontFamily:
+      'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+};
 import { initCornerstone } from '../dicom/cornerstoneInit';
 import { loadSeriesImageIds } from '../dicom/imageIds';
 import { api } from '../api/client';
@@ -129,22 +140,25 @@ export function ViewerPage() {
 
   if (error) {
     return (
-      <div className="viewer-shell">
-        <div className="viewer-topbar">
-          <span className="brand">radiolinq</span>
-          <Button size="small" onClick={() => navigate('/')}>
-            Back to studies
-          </Button>
+      <ConfigProvider theme={DARK}>
+        <div className="viewer-shell">
+          <div className="viewer-topbar">
+            <span className="brand"><span className="brand-dot" />radiolinq</span>
+            <Button size="small" onClick={() => navigate('/')}>
+              Back to studies
+            </Button>
+          </div>
+          <div className="viewer-error">{error}</div>
         </div>
-        <div className="viewer-error">{error}</div>
-      </div>
+      </ConfigProvider>
     );
   }
 
   return (
+   <ConfigProvider theme={DARK}>
     <div className="viewer-shell">
       <div className="viewer-topbar">
-        <span className="brand">radiolinq</span>
+        <span className="brand"><span className="brand-dot" />radiolinq</span>
         <Tooltip title="Reload series">
           <Button
             size="small"
@@ -184,5 +198,6 @@ export function ViewerPage() {
         </>
       )}
     </div>
+   </ConfigProvider>
   );
 }
