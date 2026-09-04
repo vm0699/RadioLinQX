@@ -247,6 +247,13 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
 
         <TB label="Overlay" active={st.showOverlay} onClick={() => st.set('showOverlay', !st.showOverlay)} />
         <TB label="Ref Lines" active={st.referenceLines} disabled={in3dOrMpr} onClick={() => st.set('referenceLines', !st.referenceLines)} />
+        <TB
+          label="Sync"
+          badge={st.layout.rows * st.layout.cols > 1 ? undefined : 'x'}
+          active={st.sync}
+          disabled={in3dOrMpr || st.layout.rows * st.layout.cols < 2}
+          onClick={() => st.set('sync', !st.sync)}
+        />
         <TB label="Reset" onClick={resetAll} />
         <TB label="Compare" onClick={() => st.setLayout(1, 2)} />
         <TB label="Full" onClick={() => {
@@ -256,6 +263,7 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
         }} />
         <TB label="Report" onClick={() => onReport?.()} />
         <TB label="Shortcuts" onClick={() => setShortcutsOpen(true)} />
+        <TB label="Hide bar" onClick={() => st.set('topBarHidden', true)} />
       </div>
       <button className="tb-chevron" onClick={() => scrollBy(300)} aria-label="scroll right">›</button>
 

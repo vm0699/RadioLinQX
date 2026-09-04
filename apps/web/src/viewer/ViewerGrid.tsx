@@ -8,6 +8,7 @@ import {
   exitVrt,
   setVrtPreset,
   applySlab,
+  applySync,
   setInvert,
   resizeEngine,
   stackViewportId,
@@ -32,6 +33,7 @@ export function ViewerGrid() {
     slabThicknessMm,
     invert,
     showOverlay,
+    sync,
     activeViewportIndex,
     set,
   } = useViewer();
@@ -128,6 +130,15 @@ export function ViewerGrid() {
   useEffect(() => {
     setInvert(invert);
   }, [invert]);
+
+  // --- viewport sync (Compare) ---
+  useEffect(() => {
+    if (mode === 'stack') {
+      const t = setTimeout(() => applySync(sync), 150);
+      return () => clearTimeout(t);
+    }
+    applySync(false);
+  }, [mode, sync, layout.rows, layout.cols, assignments]);
 
   if (mode === 'vrt') {
     return (

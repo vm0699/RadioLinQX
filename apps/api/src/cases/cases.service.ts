@@ -6,6 +6,7 @@ import { seedCases } from './cases.seed';
 import type {
   CaseRecord,
   CaseView,
+  CaseEvent,
   FilterPreset,
   TatStatus,
 } from './case.types';
@@ -22,11 +23,22 @@ export interface CaseQuery {
   branchId?: string;
   referringDoctorId?: string;
   radiologistId?: string;
+  interestingKeyword?: string;
   fromDate?: string; // yyyy-mm-dd
   toDate?: string;
   page?: string;
   perPage?: string;
   sort?: string; // e.g. "uploadedAt:desc"
+}
+
+function newEvent(type: CaseEvent['type'], detail: string, by = 'Sunray Scans'): CaseEvent {
+  return {
+    id: `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    at: new Date().toISOString(),
+    by,
+    type,
+    detail,
+  };
 }
 
 const PENDING_STATUSES = new Set(['UNREAD', 'ASSIGNED', 'DRAFT']);
@@ -113,6 +125,21 @@ export class CasesService {
       rows = rows.filter((c) => c.referringDoctorId === query.referringDoctorId);
     if (query.radiologistId)
       rows = rows.filter((c) => c.assignedRadiologistId === query.radiologistId);
+    if (query.interestingKeyword) {
+      const k = query.interestingKeyword.trim().toLowerCase();
+      rows = rows.filter((c) =>
+        [
+          c.remarks,
+          c.patientHistory,
+          c.studyDescription,
+          c.report?.findings,
+          c.report?.impression,
+          ...(c.tags ?? []),
+        ]
+          .filter(Boolean)
+          .some((s) => String(s).toLowerCase().includes(k)),
+      );
+    }
 
     if (query.fromDate) {
       const from = +new Date(query.fromDate + 'T00:00:00');
@@ -208,12 +235,39 @@ export class CasesService {
       hasImages: !!input.hasImages,
       studyInstanceUid: input.studyInstanceUid,
       seriesInstanceUids: input.seriesInstanceUids,
+      linkedCaseIds: input.linkedCaseIds ?? [],
+      attachments: [],
+      history: [
+        newEvent(
+          input.hasImages ? 'UPLOADED' : 'CREATED',
+          input.hasImages
+            ? `Study received — ${input.imageCount ?? 0} image(s)`
+            : 'Case created manually',
+        ),
+      ],
     };
     await this.store.insert(rec);
     return this.toView(rec);
   }
 
-  async update(id: string, patch: Partial<CaseRecord>): Promise<CaseView | undefined> {
+  private async appendEvents(
+    id: string,
+    events: CaseEvent[],
+    patch: Partial<CaseRecord> = {},
+  ): Promise<CaseView | undefined> {
+    const cur = await this.store.find(id);
+    if (!cur) return undefined;
+    const history = [...(cur.history ?? []), ...events].slice(-60);
+    const updated = await this.store.update(id, { ...patch, history });
+    return updated ? this.toView(updated) : undefined;
+  }
+
+  async update(
+    id: string,
+    patch: Partial<CaseRecord>,
+    events: CaseEvent[] = [],
+  ): Promise<CaseView | undefined> {
+    if (events.length) return this.appendEvents(id, events, patch);
     const updated = await this.store.update(id, patch);
     return updated ? this.toView(updated) : undefined;
   }
@@ -226,11 +280,32 @@ export class CasesService {
     const rad = s.radiologists.find((r) => r.id === radiologistId);
     if (!rad) return undefined;
     const cur = await this.store.find(id);
-    return this.update(id, {
-      assignedRadiologistId: rad.id,
-      assignedRadiologistName: rad.name,
-      status: cur?.status === 'REPORTED' ? 'REPORTED' : 'ASSIGNED',
-    });
+    return this.update(
+      id,
+      {
+        assignedRadiologistId: rad.id,
+        assignedRadiologistName: rad.name,
+        status: cur?.status === 'REPORTED' ? 'REPORTED' : 'ASSIGNED',
+      },
+      [newEvent('ASSIGNED', `Assigned to ${rad.name}`)],
+    );
+  }
+
+  /** Link / unlink related cases (prior imaging, comparisons). */
+  async link(id: string, otherId: string, unlink = false): Promise<CaseView | undefined> {
+    const cur = await this.store.find(id);
+    const other = await this.store.find(otherId);
+    if (!cur || !other || id === otherId) return undefined;
+    const set = new Set(cur.linkedCaseIds ?? []);
+    const oset = new Set(other.linkedCaseIds ?? []);
+    if (unlink) { set.delete(otherId); oset.delete(id); }
+    else { set.add(otherId); oset.add(id); }
+    await this.store.update(otherId, { linkedCaseIds: [...oset] });
+    return this.update(
+      id,
+      { linkedCaseIds: [...set] },
+      [newEvent('LINK', `${unlink ? 'Unlinked' : 'Linked'} ${other.caseNumber}`)],
+    );
   }
 
   async saveReport(
@@ -254,11 +329,43 @@ export class CasesService {
           : cur.report?.signedBy,
       signedAt: action === 'sign' ? now : cur.report?.signedAt,
     };
-    return this.update(id, {
-      report: merged,
-      status: action === 'sign' ? 'REPORTED' : 'DRAFT',
-      reportedAt: action === 'sign' ? now : cur.reportedAt,
-    });
+    return this.update(
+      id,
+      {
+        report: merged,
+        status: action === 'sign' ? 'REPORTED' : 'DRAFT',
+        reportedAt: action === 'sign' ? now : cur.reportedAt,
+      },
+      [
+        newEvent(
+          action === 'sign' ? 'REPORT_SIGNED' : 'REPORT_SAVED',
+          action === 'sign'
+            ? `Report signed by ${merged.signedBy}`
+            : 'Report draft saved',
+          cur.assignedRadiologistName ?? 'Radiologist',
+        ),
+      ],
+    );
+  }
+
+  async listHistory(id: string): Promise<CaseEvent[] | undefined> {
+    const c = await this.store.find(id);
+    if (!c) return undefined;
+    return [...(c.history ?? [])].reverse();
+  }
+
+  /** Called by the attachments controller after the file is on disk. */
+  async recordAttachment(
+    id: string,
+    att: NonNullable<CaseRecord['attachments']>[number],
+  ): Promise<CaseView | undefined> {
+    const cur = await this.store.find(id);
+    if (!cur) return undefined;
+    return this.update(
+      id,
+      { attachments: [...(cur.attachments ?? []), att] },
+      [newEvent('ATTACHMENT', `Attached ${att.name}`)],
+    );
   }
 
   remove(id: string) {
@@ -289,6 +396,9 @@ export class CasesService {
       uploadedAt: now.toISOString(),
       dueAt: new Date(now.getTime() + targetH * 3600_000).toISOString(),
       remarks: src.remarks ? `${src.remarks} (copy of ${src.caseNumber})` : `Copy of ${src.caseNumber}`,
+      linkedCaseIds: [],
+      attachments: [],
+      history: [newEvent('DUPLICATED', `Duplicated from ${src.caseNumber}`)],
     };
     await this.store.insert(copy);
     return this.toView(copy);

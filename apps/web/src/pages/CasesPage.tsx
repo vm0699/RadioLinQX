@@ -27,6 +27,7 @@ type Filters = {
   branchId?: string;
   referringDoctorId?: string;
   radiologistId?: string;
+  interestingKeyword?: string;
 };
 
 const EMPTY: Filters = { patientId: '', patientName: '', range: null };
@@ -39,7 +40,7 @@ function toQuery(f: Filters, tab: string, page: number, perPage: number): Record
     q.fromDate = f.range[0].format('YYYY-MM-DD');
     q.toDate = f.range[1].format('YYYY-MM-DD');
   }
-  for (const k of ['scanType', 'bodyPart', 'tag', 'tatStatus', 'branchId', 'referringDoctorId', 'radiologistId'] as const) {
+  for (const k of ['scanType', 'bodyPart', 'tag', 'tatStatus', 'branchId', 'referringDoctorId', 'radiologistId', 'interestingKeyword'] as const) {
     if (f[k]) q[k] = f[k] as string;
   }
   return q;
@@ -179,6 +180,12 @@ export function CasesPage() {
 
   const moreFilters = settings && (
     <div className="more-filters">
+      <label>Interesting keyword</label>
+      <Input
+        allowClear placeholder="search history / findings / tags"
+        value={filters.interestingKeyword}
+        onChange={(e) => { setPage(1); setFilters((f) => ({ ...f, interestingKeyword: e.target.value || undefined })); }}
+      />
       <label>TAT status</label>
       <Select
         allowClear placeholder="Any" style={{ width: '100%' }}

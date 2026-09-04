@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Drawer, Descriptions, Tag, Select, Button, Input, Space, Divider, App as AntdApp,
-  Segmented, Spin,
+  Segmented, Spin, List,
 } from 'antd';
+import { PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
   api, type AppSettings, type CaseView, type CaseReport, type ReferringDoctor,
 } from '../../api/client';
 import { StatusTag } from './cells';
+import { CaseHistoryPopover } from './CaseHistoryPopover';
 
 const BLANK: CaseReport = {
   clinicalHistory: '', technique: '', findings: '', impression: '', updatedAt: '',
@@ -30,9 +32,11 @@ export function CaseDrawer({
   const { message } = AntdApp.useApp();
   const [c, setC] = useState<CaseView | null>(null);
   const [loading, setLoading] = useState(false);
-  const [pane, setPane] = useState<'details' | 'report'>('details');
+  const [pane, setPane] = useState<'details' | 'report' | 'files'>('details');
   const [report, setReport] = useState<CaseReport>(BLANK);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const attInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!caseId) {
@@ -115,11 +119,12 @@ export function CaseDrawer({
             options={[
               { label: 'Details', value: 'details' },
               { label: 'Report', value: 'report' },
+              { label: 'Files & history', value: 'files' },
             ]}
             style={{ marginBottom: 16 }}
           />
 
-          {pane === 'details' ? (
+          {pane === 'details' && (
             <>
               <Descriptions column={2} size="small" bordered>
                 <Descriptions.Item label="Patient ID">{c.patientId}</Descriptions.Item>
@@ -173,7 +178,9 @@ export function CaseDrawer({
                 options={(settings?.tags ?? []).map((t) => ({ value: t, label: t }))}
               />
             </>
-          ) : (
+          )}
+
+          {pane === 'report' && (
             <>
               {['clinicalHistory', 'technique', 'findings', 'impression'].map((k) => (
                 <div key={k} style={{ marginBottom: 12 }}>
@@ -215,6 +222,80 @@ export function CaseDrawer({
                   </>
                 )}
               </Space>
+            </>
+          )}
+
+          {pane === 'files' && (
+            <>
+              <label className="fld-label">Case attachments</label>
+              <p className="dim" style={{ marginTop: 2 }}>
+                Prior reports, lab results, consent forms, key screenshots.
+              </p>
+              <input
+                ref={attInput}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (!files.length) return;
+                  setUploading(true);
+                  try {
+                    const updated = await api.addAttachments(c.id, files);
+                    setC(updated);
+                    onChanged();
+                    message.success(`Attached ${files.length} file(s)`);
+                  } catch (err) {
+                    message.error(String((err as Error).message || err));
+                  } finally {
+                    setUploading(false);
+                    if (attInput.current) attInput.current.value = '';
+                  }
+                }}
+              />
+              <Button
+                icon={<PaperClipOutlined />}
+                loading={uploading}
+                onClick={() => attInput.current?.click()}
+              >
+                Add attachment
+              </Button>
+
+              <List
+                size="small"
+                style={{ marginTop: 10 }}
+                locale={{ emptyText: 'No attachments' }}
+                dataSource={c.attachments ?? []}
+                renderItem={(a) => (
+                  <List.Item
+                    actions={[
+                      <a
+                        key="dl"
+                        href={api.attachmentUrl(c.id, a.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <DownloadOutlined />
+                      </a>,
+                    ]}
+                  >
+                    <List.Item.Meta
+                      avatar={<PaperClipOutlined />}
+                      title={a.name}
+                      description={
+                        <span className="dim">
+                          {(a.size / 1024).toFixed(0)} KB ·{' '}
+                          {dayjs(a.uploadedAt).format('DD MMM YY, HH:mm')}
+                        </span>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+
+              <Divider />
+              <label className="fld-label">History</label>
+              <CaseHistoryPopover caseId={c.id} />
             </>
           )}
         </>

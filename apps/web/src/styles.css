@@ -299,3 +299,11 @@ body {
   background: #1a2136; border: 1px solid #2a3350; border-radius: 4px;
   padding: 1px 6px; font-size: 12px;
 }
+
+/* ---------- viewer: hidden toolbar peek ---------- */
+.toolbar-peek {
+  width: 100%; border: 0; cursor: pointer;
+  background: #0a0f1e; color: #8a91a3; font-size: 11px;
+  padding: 3px 0; border-bottom: 1px solid #1c2333;
+}
+.toolbar-peek:hover { color: #cfd4e0; }

@@ -343,6 +343,48 @@ export function resetActive(viewportId: string): void {
   vp?.render();
 }
 
+// --- viewport sync (Compare layouts) ---------------------------------
+
+const SYNC_IDS = {
+  stack: 'RLQ_SYNC_STACK',
+  voi: 'RLQ_SYNC_VOI',
+  zoompan: 'RLQ_SYNC_ZOOMPAN',
+} as const;
+
+export function applySync(on: boolean): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const sm = (csTools as any).SynchronizerManager;
+  const sync = (csTools as any).synchronizers;
+  if (!re || !sm || !sync) return;
+
+  const stackVps = re.getViewports().filter((v) => v.id.startsWith('STACK_'));
+
+  const destroy = () => {
+    for (const id of Object.values(SYNC_IDS)) {
+      try {
+        sm.destroySynchronizer(id);
+      } catch {
+        /* not created */
+      }
+    }
+  };
+  destroy();
+  if (!on || stackVps.length < 2) return;
+
+  try {
+    const s1 = sync.createStackImageSynchronizer(SYNC_IDS.stack);
+    const s2 = sync.createVOISynchronizer(SYNC_IDS.voi, { syncInvertState: false });
+    const s3 = sync.createZoomPanSynchronizer(SYNC_IDS.zoompan);
+    for (const vp of stackVps) {
+      s1?.add({ renderingEngineId: ENGINE_ID, viewportId: vp.id });
+      s2?.add({ renderingEngineId: ENGINE_ID, viewportId: vp.id });
+      s3?.add({ renderingEngineId: ENGINE_ID, viewportId: vp.id });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Reset zoom / pan / W-L on every live viewport. */
 export function resetAll(): void {
   const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;

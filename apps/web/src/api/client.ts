@@ -46,6 +46,23 @@ export interface CaseReport {
   signedBy?: string;
   signedAt?: string;
 }
+export interface CaseAttachment {
+  id: string;
+  name: string;
+  size: number;
+  mime: string;
+  uploadedAt: string;
+  file: string;
+}
+export interface CaseEvent {
+  id: string;
+  at: string;
+  by: string;
+  type:
+    | 'CREATED' | 'UPLOADED' | 'EDITED' | 'ASSIGNED' | 'STATUS'
+    | 'REPORT_SAVED' | 'REPORT_SIGNED' | 'TAG' | 'LINK' | 'ATTACHMENT' | 'DUPLICATED';
+  detail: string;
+}
 export interface CaseView {
   id: string;
   caseNumber: string;
@@ -78,6 +95,9 @@ export interface CaseView {
   studyInstanceUid?: string;
   seriesInstanceUids?: string[];
   report?: CaseReport;
+  linkedCaseIds?: string[];
+  attachments?: CaseAttachment[];
+  history?: CaseEvent[];
   tatStatus: TatStatus;
   timeElapsedMs: number;
   timeRemainingMs: number;
@@ -215,6 +235,22 @@ export const api = {
   duplicateCase: (id: string) => post<CaseView>(`/api/cases/${id}/duplicate`),
   /** absolute URL for the zip download (opened in a new tab) */
   caseDownloadUrl: (id: string) => `${API_BASE}/api/cases/${id}/download`,
+  caseReportTxtUrl: (id: string) => `${API_BASE}/api/cases/${id}/report.txt`,
+  linkCases: (id: string, otherId: string, unlink = false) =>
+    post<CaseView>(`/api/cases/${id}/link`, { otherId, unlink }),
+  caseHistory: (id: string) => get<CaseEvent[]>(`/api/cases/${id}/history`),
+  addAttachments: async (id: string, files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f, f.name));
+    const res = await fetch(`${API_BASE}/api/cases/${id}/attachments`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || `${res.status}`);
+    return res.json() as Promise<CaseView>;
+  },
+  attachmentUrl: (id: string, aid: string) =>
+    `${API_BASE}/api/cases/${id}/attachments/${aid}`,
 
   // upload
   uploadStudy: async (files: File[], meta: Record<string, string> = {}) => {

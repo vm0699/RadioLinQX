@@ -56,6 +56,9 @@ export interface ViewerState {
 
   invert: boolean;
   showOverlay: boolean;
+  /** link scroll + W/L + zoom-pan across viewports (Compare layouts) */
+  sync: boolean;
+  topBarHidden: boolean;
 
   set: <K extends keyof ViewerState>(k: K, v: ViewerState[K]) => void;
   setLayout: (rows: number, cols: number) => void;
@@ -82,6 +85,8 @@ const initial = {
   cineFps: 24,
   invert: false,
   showOverlay: true,
+  sync: false,
+  topBarHidden: false,
 };
 
 export const useViewer = create<ViewerState>((set) => ({

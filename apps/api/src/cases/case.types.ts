@@ -60,6 +60,40 @@ export interface CaseRecord {
   seriesInstanceUids?: string[];
 
   report?: CaseReport;
+
+  /** other case ids this study is compared against (prior imaging etc.) */
+  linkedCaseIds?: string[];
+  attachments?: CaseAttachment[];
+  history?: CaseEvent[];
+}
+
+export interface CaseAttachment {
+  id: string;
+  name: string;
+  size: number;
+  mime: string;
+  uploadedAt: string;
+  /** relative path under DATA_DIR/attachments/<caseId>/ */
+  file: string;
+}
+
+export interface CaseEvent {
+  id: string;
+  at: string;
+  by: string;
+  type:
+    | 'CREATED'
+    | 'UPLOADED'
+    | 'EDITED'
+    | 'ASSIGNED'
+    | 'STATUS'
+    | 'REPORT_SAVED'
+    | 'REPORT_SIGNED'
+    | 'TAG'
+    | 'LINK'
+    | 'ATTACHMENT'
+    | 'DUPLICATED';
+  detail: string;
 }
 
 export interface FilterPreset {

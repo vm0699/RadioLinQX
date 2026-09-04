@@ -112,6 +112,28 @@ export async function seedCases(
       imageCount: intBetween(rng, 1, 480),
       seriesCount: intBetween(rng, 1, 6),
       hasImages: false,
+      linkedCaseIds: [],
+      attachments: [],
+      history: [
+        {
+          id: `ev-seed-${seq}`,
+          at: uploadedAt.toISOString(),
+          by: 'Sunray Scans',
+          type: 'UPLOADED' as const,
+          detail: 'Study received',
+        },
+        ...(reported
+          ? [
+              {
+                id: `ev-seed-r-${seq}`,
+                at: reportedAt!,
+                by: rad.name,
+                type: 'REPORT_SIGNED' as const,
+                detail: `Report signed by ${rad.name}`,
+              },
+            ]
+          : []),
+      ],
       report: reported
         ? {
             clinicalHistory: 'As provided by referring physician.',

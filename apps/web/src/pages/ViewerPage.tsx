@@ -87,6 +87,10 @@ export function ViewerPage() {
           layout: { rows: 1, cols: 1 },
           assignments: [loaded[0]?.seriesInstanceUid],
           activeViewportIndex: 0,
+          mpr: false,
+          vrt: false,
+          sync: false,
+          topBarHidden: false,
         });
 
         setReady(true);
@@ -162,13 +166,17 @@ export function ViewerPage() {
         </div>
       ) : (
         <>
-          <Toolbar
-            onReport={() =>
-              caseId
-                ? navigate(`/?case=${caseId}`)
-                : navigate('/')
-            }
-          />
+          {store.topBarHidden ? (
+            <button className="toolbar-peek" onClick={() => store.set('topBarHidden', false)}>
+              ▾ show toolbar
+            </button>
+          ) : (
+            <Toolbar
+              onReport={() =>
+                caseId ? navigate(`/?case=${caseId}`) : navigate('/')
+              }
+            />
+          )}
           <div className="viewer-body">
             <SeriesPanel />
             <ViewerGrid />

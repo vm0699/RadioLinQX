@@ -3,16 +3,20 @@ import { Button, Dropdown, Popover, Select, Tooltip, App as AntdApp } from 'antd
 import {
   EditOutlined,
   ShareAltOutlined,
-  DownloadOutlined,
+  CloudDownloadOutlined,
   MessageOutlined,
   TagsOutlined,
   CopyOutlined,
   EyeOutlined,
   MoreOutlined,
   HistoryOutlined,
+  LinkOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { api, type CaseView, type AppSettings } from '../../api/client';
 import { CaseChatPopover } from './CaseChatPopover';
+import { CaseHistoryPopover } from './CaseHistoryPopover';
+import { LinkCasesPopover } from './LinkCasesPopover';
 
 export function CaseRowActions({
   c,
@@ -32,6 +36,7 @@ export function CaseRowActions({
   const { message, modal } = AntdApp.useApp();
   const [tags, setTags] = useState<string[]>(c.tags);
   const [savingTags, setSavingTags] = useState(false);
+  const reported = c.status === 'REPORTED';
 
   const shareLink = `${location.origin}/?case=${c.id}`;
 
@@ -86,47 +91,56 @@ export function CaseRowActions({
     </Tooltip>
   );
 
+  const popBtn = (title: string, icon: React.ReactNode, content: React.ReactNode) => (
+    <Popover trigger="click" placement="bottomRight" content={content}>
+      <Tooltip title={title}>
+        <Button size="small" type="text" icon={icon} />
+      </Tooltip>
+    </Popover>
+  );
+
   return (
     <div className="row-actions">
       {iconBtn('View series', <EyeOutlined />, () => onView(c), !c.hasImages)}
       {iconBtn('Edit case', <EditOutlined />, () => onEdit(c))}
       {iconBtn('Copy share link', <ShareAltOutlined />, doShare)}
-      {iconBtn('Download (DICOM + report)', <DownloadOutlined />, () =>
+      {iconBtn('Download case (DICOM + report)', <CloudDownloadOutlined />, () =>
         window.open(api.caseDownloadUrl(c.id), '_blank'),
       )}
+      {reported &&
+        iconBtn('Download report', <FileTextOutlined />, () =>
+          window.open(api.caseReportTxtUrl(c.id), '_blank'),
+        )}
 
-      <Popover
-        trigger="click"
-        placement="bottomRight"
-        content={<CaseChatPopover caseId={c.id} onPosted={onChanged} />}
-      >
-        <Tooltip title="Case chat">
-          <Button size="small" type="text" icon={<MessageOutlined />} />
-        </Tooltip>
-      </Popover>
-
-      <Popover trigger="click" placement="bottomRight" content={tagEditor}>
-        <Tooltip title="Tags">
-          <Button size="small" type="text" icon={<TagsOutlined />} />
-        </Tooltip>
-      </Popover>
+      {popBtn('Case chat', <MessageOutlined />, <CaseChatPopover caseId={c.id} onPosted={onChanged} />)}
+      {popBtn(
+        'Link related cases',
+        <LinkOutlined />,
+        <LinkCasesPopover theCase={c} onChanged={onChanged} />,
+      )}
+      {popBtn('Tags', <TagsOutlined />, tagEditor)}
 
       {iconBtn('Duplicate case', <CopyOutlined />, doDuplicate)}
+
+      {reported &&
+        popBtn('Case history', <HistoryOutlined />, <CaseHistoryPopover caseId={c.id} />)}
 
       <Dropdown
         trigger={['click']}
         menu={{
           items: [
-            { key: 'open', label: 'Open case', icon: <HistoryOutlined /> },
+            { key: 'open', label: 'Open case details' },
             { key: 'assign', label: 'Assign radiologist' },
-            c.status === 'REPORTED'
+            reported
               ? { key: 'reopen', label: 'Reopen (mark pending)' }
               : { key: 'report', label: 'Open report editor' },
+            { key: 'history', label: 'View history' },
             { type: 'divider' },
             { key: 'delete', label: 'Delete', danger: true },
           ],
           onClick: async ({ key }) => {
-            if (key === 'open' || key === 'report' || key === 'assign') onOpenDrawer(c.id);
+            if (key === 'open' || key === 'report' || key === 'assign' || key === 'history')
+              onOpenDrawer(c.id);
             if (key === 'reopen') {
               await api.updateCase(c.id, { status: 'ASSIGNED', reportedAt: undefined });
               onChanged();

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -10,14 +11,19 @@ import {
   Put,
   Query,
   Res,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { createReadStream } from 'fs';
+import { promises as fsp } from 'fs';
 import * as path from 'path';
 import archiver = require('archiver');
 import { CasesService, type CaseQuery } from './cases.service';
 import type { CaseRecord } from './case.types';
 import { scanDicomInstances, sampleDir } from '../local/local.service';
+import { dataDir } from '../store/json-store';
 
 @Controller('api/cases')
 export class CasesController {
@@ -79,6 +85,98 @@ export class CasesController {
     const c = await this.cases.duplicate(id);
     if (!c) throw new NotFoundException();
     return c;
+  }
+
+  @Post(':id/link')
+  async link(
+    @Param('id') id: string,
+    @Body() body: { otherId: string; unlink?: boolean },
+  ) {
+    const c = await this.cases.link(id, body.otherId, !!body.unlink);
+    if (!c) throw new BadRequestException('invalid case ids');
+    return c;
+  }
+
+  @Get(':id/history')
+  async history(@Param('id') id: string) {
+    const h = await this.cases.listHistory(id);
+    if (!h) throw new NotFoundException();
+    return h;
+  }
+
+  /** Report only, as plain text. */
+  @Get(':id/report.txt')
+  async reportText(@Param('id') id: string, @Res() res: Response) {
+    const c = await this.cases.get(id);
+    if (!c) throw new NotFoundException();
+    const r = c.report;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${c.caseNumber}-report.txt"`,
+    );
+    res.send(
+      [
+        `${c.caseNumber} — ${c.patientName} (${c.patientId})`,
+        `${c.scanType} · ${c.studyDescription ?? ''}`,
+        `Referring: ${c.referringDoctorName ?? '-'}`,
+        ``,
+        r ? `CLINICAL HISTORY\n${r.clinicalHistory}\n` : 'No report authored yet.',
+        r ? `TECHNIQUE\n${r.technique}\n` : '',
+        r ? `FINDINGS\n${r.findings}\n` : '',
+        r ? `IMPRESSION\n${r.impression}\n` : '',
+        r?.signedBy ? `\nElectronically signed by ${r.signedBy} — ${r.signedAt}` : '',
+      ].join('\n'),
+    );
+  }
+
+  // ---- attachments ----
+  @Post(':id/attachments')
+  @UseInterceptors(
+    FilesInterceptor('files', 20, { limits: { fileSize: 25 * 1024 * 1024 } }),
+  )
+  async addAttachments(
+    @Param('id') id: string,
+    @UploadedFiles() files: Array<{ buffer: Buffer; originalname: string; mimetype: string }>,
+  ) {
+    if (!files?.length) throw new BadRequestException('no files');
+    const dir = path.join(dataDir(), 'attachments', id);
+    await fsp.mkdir(dir, { recursive: true });
+    let last;
+    for (const f of files) {
+      const aid = `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      const safeName = f.originalname.replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+      const file = `${aid}__${safeName}`;
+      await fsp.writeFile(path.join(dir, file), f.buffer);
+      last = await this.cases.recordAttachment(id, {
+        id: aid,
+        name: safeName,
+        size: f.buffer.length,
+        mime: f.mimetype || 'application/octet-stream',
+        uploadedAt: new Date().toISOString(),
+        file,
+      });
+    }
+    if (!last) throw new NotFoundException();
+    return last;
+  }
+
+  @Get(':id/attachments/:aid')
+  async getAttachment(
+    @Param('id') id: string,
+    @Param('aid') aid: string,
+    @Res() res: Response,
+  ) {
+    const c = await this.cases.get(id);
+    const att = c?.attachments?.find((a) => a.id === aid);
+    if (!att) throw new NotFoundException();
+    const abs = path.resolve(dataDir(), 'attachments', id, att.file);
+    if (!abs.startsWith(path.resolve(dataDir(), 'attachments'))) {
+      throw new NotFoundException();
+    }
+    res.setHeader('Content-Type', att.mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${att.name}"`);
+    createReadStream(abs).pipe(res);
   }
 
   /** Zip of the case's DICOM instances + a report.txt. */
