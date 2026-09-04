@@ -6,25 +6,48 @@ export function AddCaseModal({
   open,
   settings,
   referrers,
+  editCase,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   open: boolean;
   settings: AppSettings | null;
   referrers: ReferringDoctor[];
+  editCase?: CaseView | null;
   onClose: () => void;
-  onCreated: (c: CaseView) => void;
+  onSaved: (c: CaseView) => void;
 }) {
   const [form] = Form.useForm();
+  const isEdit = !!editCase;
 
   useEffect(() => {
-    if (open) form.resetFields();
-  }, [open, form]);
+    if (!open) return;
+    if (editCase) {
+      form.setFieldsValue({
+        patientId: editCase.patientId,
+        patientName: editCase.patientName,
+        patientMobile: editCase.patientMobile,
+        patientAge: editCase.patientAge,
+        patientSex: editCase.patientSex,
+        scanType: editCase.scanType,
+        bodyParts: editCase.bodyParts,
+        branchId: editCase.branchId,
+        contrast: editCase.contrast ?? 'No',
+        studyDescription: editCase.studyDescription,
+        referringDoctorId: editCase.referringDoctorId,
+        referringDoctorMobile: editCase.referringDoctorMobile,
+        patientHistory: editCase.patientHistory,
+        remarks: editCase.remarks,
+      });
+    } else {
+      form.resetFields();
+    }
+  }, [open, editCase, form]);
 
   const submit = async () => {
     const v = await form.validateFields();
     const ref = referrers.find((d) => d.id === v.referringDoctorId);
-    const c = await api.createCase({
+    const payload = {
       patientId: v.patientId,
       patientName: v.patientName,
       patientMobile: v.patientMobile,
@@ -40,17 +63,20 @@ export function AddCaseModal({
       referringDoctorMobile: ref?.phone ?? v.referringDoctorMobile,
       patientHistory: v.patientHistory,
       remarks: v.remarks,
-    });
-    onCreated(c);
+    };
+    const c = isEdit
+      ? await api.updateCase(editCase!.id, payload)
+      : await api.createCase(payload);
+    onSaved(c);
   };
 
   return (
     <Modal
-      title="Add Case"
+      title={isEdit ? `Edit Case · ${editCase!.caseNumber}` : 'Add Case'}
       open={open}
       onCancel={onClose}
       onOk={submit}
-      okText="Add"
+      okText={isEdit ? 'Save' : 'Add'}
       width={640}
       destroyOnClose
     >

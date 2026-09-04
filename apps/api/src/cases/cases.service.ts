@@ -265,6 +265,35 @@ export class CasesService {
     return this.store.remove(id);
   }
 
+  /** Clone a case as a fresh unread study (keeps the image linkage). */
+  async duplicate(id: string): Promise<CaseView | undefined> {
+    const src = await this.store.find(id);
+    if (!src) return undefined;
+    const all = await this.store.all();
+    const n = all.length + 1;
+    const now = new Date();
+    const s = await this.settings.get();
+    const targetH =
+      s.tat.targetHoursByScanType[src.scanType] ??
+      s.tat.targetHoursByScanType['*'] ??
+      24;
+    const copy: CaseRecord = {
+      ...src,
+      id: `case-${Date.now().toString(36)}`,
+      caseNumber: `RLQ-${now.getFullYear()}-${String(n).padStart(5, '0')}`,
+      status: 'UNREAD',
+      assignedRadiologistId: undefined,
+      assignedRadiologistName: undefined,
+      reportedAt: undefined,
+      report: undefined,
+      uploadedAt: now.toISOString(),
+      dueAt: new Date(now.getTime() + targetH * 3600_000).toISOString(),
+      remarks: src.remarks ? `${src.remarks} (copy of ${src.caseNumber})` : `Copy of ${src.caseNumber}`,
+    };
+    await this.store.insert(copy);
+    return this.toView(copy);
+  }
+
   // ---- presets ----
   listPresets() {
     return this.presets.all();

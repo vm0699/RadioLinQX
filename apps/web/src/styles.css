@@ -238,3 +238,64 @@ body {
   background: #16203a; color: #e6e8ee;
 }
 .chat-msg.me .chat-bubble { background: #2f54eb; }
+
+/* ---------- case row actions ---------- */
+.row-actions { display: flex; align-items: center; gap: 0; flex-wrap: nowrap; }
+.row-actions .ant-btn { padding-inline: 5px; }
+.linklike {
+  background: none; border: none; color: #4c7dff; cursor: pointer;
+  font-size: 12px; padding: 0;
+}
+.linklike:disabled { color: #6b7280; cursor: not-allowed; }
+.upload-meta { display: grid; gap: 4px; margin-top: 10px; }
+.upload-meta label { font-size: 12px; color: #8a91a3; }
+
+/* ---------- case chat popover ---------- */
+.case-chat { width: 320px; display: flex; flex-direction: column; }
+.case-chat-list {
+  max-height: 260px; overflow-y: auto; display: flex; flex-direction: column;
+  gap: 8px; padding: 4px 2px 8px;
+}
+.case-chat .msg {
+  background: #141b2e; border: 1px solid #232c44; border-radius: 8px;
+  padding: 6px 8px; font-size: 13px;
+}
+.case-chat .msg.role-radiologist { border-color: #2f54eb; }
+.case-chat .msg-head { font-size: 11px; margin-bottom: 2px; }
+.case-chat-input { display: flex; gap: 6px; align-items: flex-end; padding-top: 6px; }
+.case-chat-input .ant-input { flex: 1; }
+
+/* ---------- viewer toolbar horizontal scroll ---------- */
+.toolbar-scroll { position: relative; display: flex; align-items: stretch; min-width: 0; }
+.toolbar-scroll .tb-chevron {
+  flex: 0 0 auto; width: 22px; border: none; cursor: pointer;
+  background: #0a0f1e; color: #c7ccda; font-size: 14px;
+}
+.toolbar-scroll .tb-chevron:hover { background: #141b2e; }
+.tb-track {
+  display: flex; align-items: center; gap: 2px; overflow-x: auto;
+  scrollbar-width: none; scroll-behavior: smooth;
+}
+.tb-track::-webkit-scrollbar { display: none; }
+
+/* ---------- chats page ---------- */
+.chats-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; margin-top: 12px; }
+.chats-list { display: flex; flex-direction: column; gap: 6px; }
+.chats-item {
+  text-align: left; background: #0e1526; border: 1px solid #1c2333;
+  border-radius: 8px; padding: 8px 10px; cursor: pointer; color: #e6e8ee;
+}
+.chats-item:hover { background: #141b2e; }
+.chats-item.active { border-color: #2f54eb; }
+.chats-item-top { display: flex; justify-content: space-between; }
+.ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chats-thread { border: 1px solid #1c2333; border-radius: 8px; padding: 12px; }
+.chats-thread-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.chats-thread-head a { color: #4c7dff; cursor: pointer; }
+
+/* ---------- shortcuts modal ---------- */
+.shortcuts-table td { padding: 4px 10px 4px 0; vertical-align: top; }
+.shortcuts-table kbd {
+  background: #1a2136; border: 1px solid #2a3350; border-radius: 4px;
+  padding: 1px 6px; font-size: 12px;
+}

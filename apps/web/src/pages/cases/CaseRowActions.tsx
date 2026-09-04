@@ -1,0 +1,152 @@
+import { useState } from 'react';
+import { Button, Dropdown, Popover, Select, Tooltip, App as AntdApp } from 'antd';
+import {
+  EditOutlined,
+  ShareAltOutlined,
+  DownloadOutlined,
+  MessageOutlined,
+  TagsOutlined,
+  CopyOutlined,
+  EyeOutlined,
+  MoreOutlined,
+  HistoryOutlined,
+} from '@ant-design/icons';
+import { api, type CaseView, type AppSettings } from '../../api/client';
+import { CaseChatPopover } from './CaseChatPopover';
+
+export function CaseRowActions({
+  c,
+  settings,
+  onChanged,
+  onView,
+  onEdit,
+  onOpenDrawer,
+}: {
+  c: CaseView;
+  settings: AppSettings | null;
+  onChanged: () => void;
+  onView: (c: CaseView) => void;
+  onEdit: (c: CaseView) => void;
+  onOpenDrawer: (id: string) => void;
+}) {
+  const { message, modal } = AntdApp.useApp();
+  const [tags, setTags] = useState<string[]>(c.tags);
+  const [savingTags, setSavingTags] = useState(false);
+
+  const shareLink = `${location.origin}/?case=${c.id}`;
+
+  const doShare = async () => {
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      message.success('Case link copied');
+    } catch {
+      modal.info({ title: 'Share link', content: shareLink });
+    }
+  };
+
+  const doDuplicate = async () => {
+    const dup = await api.duplicateCase(c.id);
+    message.success(`Duplicated → ${dup.caseNumber}`);
+    onChanged();
+  };
+
+  const saveTags = async (next: string[]) => {
+    setTags(next);
+    setSavingTags(true);
+    try {
+      await api.updateCase(c.id, { tags: next });
+      onChanged();
+    } finally {
+      setSavingTags(false);
+    }
+  };
+
+  const tagEditor = (
+    <div style={{ width: 260 }}>
+      <Select
+        mode="tags"
+        style={{ width: '100%' }}
+        value={tags}
+        onChange={saveTags}
+        loading={savingTags}
+        placeholder="Add / remove tags"
+        options={(settings?.tags ?? []).map((t) => ({ value: t, label: t }))}
+      />
+    </div>
+  );
+
+  const iconBtn = (
+    title: string,
+    icon: React.ReactNode,
+    onClick: () => void,
+    disabled = false,
+  ) => (
+    <Tooltip title={title}>
+      <Button size="small" type="text" icon={icon} disabled={disabled} onClick={onClick} />
+    </Tooltip>
+  );
+
+  return (
+    <div className="row-actions">
+      {iconBtn('View series', <EyeOutlined />, () => onView(c), !c.hasImages)}
+      {iconBtn('Edit case', <EditOutlined />, () => onEdit(c))}
+      {iconBtn('Copy share link', <ShareAltOutlined />, doShare)}
+      {iconBtn('Download (DICOM + report)', <DownloadOutlined />, () =>
+        window.open(api.caseDownloadUrl(c.id), '_blank'),
+      )}
+
+      <Popover
+        trigger="click"
+        placement="bottomRight"
+        content={<CaseChatPopover caseId={c.id} onPosted={onChanged} />}
+      >
+        <Tooltip title="Case chat">
+          <Button size="small" type="text" icon={<MessageOutlined />} />
+        </Tooltip>
+      </Popover>
+
+      <Popover trigger="click" placement="bottomRight" content={tagEditor}>
+        <Tooltip title="Tags">
+          <Button size="small" type="text" icon={<TagsOutlined />} />
+        </Tooltip>
+      </Popover>
+
+      {iconBtn('Duplicate case', <CopyOutlined />, doDuplicate)}
+
+      <Dropdown
+        trigger={['click']}
+        menu={{
+          items: [
+            { key: 'open', label: 'Open case', icon: <HistoryOutlined /> },
+            { key: 'assign', label: 'Assign radiologist' },
+            c.status === 'REPORTED'
+              ? { key: 'reopen', label: 'Reopen (mark pending)' }
+              : { key: 'report', label: 'Open report editor' },
+            { type: 'divider' },
+            { key: 'delete', label: 'Delete', danger: true },
+          ],
+          onClick: async ({ key }) => {
+            if (key === 'open' || key === 'report' || key === 'assign') onOpenDrawer(c.id);
+            if (key === 'reopen') {
+              await api.updateCase(c.id, { status: 'ASSIGNED', reportedAt: undefined });
+              onChanged();
+            }
+            if (key === 'delete') {
+              modal.confirm({
+                title: `Delete ${c.caseNumber}?`,
+                okType: 'danger',
+                onOk: async () => {
+                  await api.deleteCase(c.id);
+                  message.success('Deleted');
+                  onChanged();
+                },
+              });
+            }
+          },
+        }}
+      >
+        <Button size="small" type="text" icon={<MoreOutlined />} />
+      </Dropdown>
+    </div>
+  );
+}

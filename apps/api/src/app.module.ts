@@ -11,6 +11,10 @@ import { CasesController } from './cases/cases.controller';
 import { CasesService } from './cases/cases.service';
 import { NotificationsController } from './notifications/notifications.controller';
 import { NotificationsService } from './notifications/notifications.service';
+import { ChatController } from './chat/chat.controller';
+import { ChatService } from './chat/chat.service';
+import { UploadController } from './upload/upload.controller';
+import { UploadService } from './upload/upload.service';
 
 @Module({
   controllers: [
@@ -21,6 +25,8 @@ import { NotificationsService } from './notifications/notifications.service';
     ReferringDoctorsController,
     CasesController,
     NotificationsController,
+    ChatController,
+    UploadController,
   ],
   providers: [
     OrthancService,
@@ -28,6 +34,8 @@ import { NotificationsService } from './notifications/notifications.service';
     ReferringDoctorsService,
     CasesService,
     NotificationsService,
+    ChatService,
+    UploadService,
   ],
 })
 export class AppModule {}

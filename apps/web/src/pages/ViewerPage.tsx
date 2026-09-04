@@ -162,7 +162,13 @@ export function ViewerPage() {
         </div>
       ) : (
         <>
-          <Toolbar />
+          <Toolbar
+            onReport={() =>
+              caseId
+                ? navigate(`/?case=${caseId}`)
+                : navigate('/')
+            }
+          />
           <div className="viewer-body">
             <SeriesPanel />
             <ViewerGrid />

@@ -136,6 +136,20 @@ export interface Notification {
   at: string;
   read: boolean;
 }
+export interface ChatMessage {
+  id: string;
+  author: string;
+  role: 'radiologist' | 'centre' | 'referrer' | 'system';
+  text: string;
+  at: string;
+}
+export interface ChatThread {
+  id: string;
+  caseId: string;
+  patientName: string;
+  messages: ChatMessage[];
+  updatedAt: string;
+}
 
 // ---------- transport ----------
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -198,6 +212,25 @@ export const api = {
   saveReport: (id: string, report: Partial<CaseReport>, action: 'save' | 'sign') =>
     put<CaseView>(`/api/cases/${id}/report`, { report, action }),
   deleteCase: (id: string) => del<{ ok: boolean }>(`/api/cases/${id}`),
+  duplicateCase: (id: string) => post<CaseView>(`/api/cases/${id}/duplicate`),
+  /** absolute URL for the zip download (opened in a new tab) */
+  caseDownloadUrl: (id: string) => `${API_BASE}/api/cases/${id}/download`,
+
+  // upload
+  uploadStudy: async (files: File[], meta: Record<string, string> = {}) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f, f.name));
+    Object.entries(meta).forEach(([k, v]) => v && fd.append(k, v));
+    const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || `upload ${res.status}`);
+    return res.json() as Promise<{ created: CaseView[]; accepted: number; rejected: number }>;
+  },
+
+  // chat
+  caseChat: (id: string) => get<ChatThread>(`/api/cases/${id}/chat`),
+  postCaseChat: (id: string, text: string, author = 'You') =>
+    post<ChatThread>(`/api/cases/${id}/chat`, { text, author }),
+  chatThreads: () => get<ChatThread[]>('/api/chat/threads'),
 
   // presets
   listPresets: () => get<FilterPreset[]>('/api/cases/presets'),

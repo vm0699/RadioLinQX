@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Table, Tabs, Input, Select, DatePicker, Button, Tag, Dropdown, Popover,
-  Space, App as AntdApp,
+  Table, Tabs, Input, Select, DatePicker, Button, Tag, Popover,
+  App as AntdApp,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -10,8 +10,10 @@ import {
   api, type CaseView, type AppSettings, type FilterPreset, type ReferringDoctor,
 } from '../api/client';
 import { AddCaseModal } from './cases/AddCaseModal';
+import { UploadStudyModal } from './cases/UploadStudyModal';
 import { CaseDrawer } from './cases/CaseDrawer';
 import { SeriesPickerModal } from './cases/SeriesPickerModal';
+import { CaseRowActions } from './cases/CaseRowActions';
 import { StatusTag, TatCell } from './cases/cells';
 
 type Filters = {
@@ -44,7 +46,7 @@ function toQuery(f: Filters, tab: string, page: number, perPage: number): Record
 }
 
 export function CasesPage() {
-  const { message, modal } = AntdApp.useApp();
+  const { message } = AntdApp.useApp();
   const [sp, setSp] = useSearchParams();
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -62,6 +64,8 @@ export function CasesPage() {
   const [loading, setLoading] = useState(true);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [editCase, setEditCase] = useState<CaseView | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [drawerId, setDrawerId] = useState<string | null>(sp.get('case'));
   const [seriesPickCase, setSeriesPickCase] = useState<CaseView | null>(null);
 
@@ -159,52 +163,16 @@ export function CasesPage() {
     },
     {
       title: 'Actions',
-      width: 170,
+      width: 250,
       render: (_, r) => (
-        <Space size={4}>
-          <Button
-            size="small"
-            type="link"
-            disabled={!r.hasImages}
-            onClick={() => setSeriesPickCase(r)}
-          >
-            View series
-          </Button>
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: [
-                { key: 'open', label: 'Open case' },
-                { key: 'assign', label: 'Assign radiologist' },
-                r.status === 'REPORTED'
-                  ? { key: 'reopen', label: 'Reopen (mark pending)' }
-                  : { key: 'report', label: 'Open report editor' },
-                { type: 'divider' },
-                { key: 'delete', label: 'Delete', danger: true },
-              ],
-              onClick: async ({ key }) => {
-                if (key === 'open' || key === 'report') setDrawerId(r.id);
-                if (key === 'reopen') {
-                  await api.updateCase(r.id, { status: 'ASSIGNED', reportedAt: undefined });
-                  load();
-                }
-                if (key === 'assign') setDrawerId(r.id);
-                if (key === 'delete') {
-                  modal.confirm({
-                    title: `Delete case ${r.caseNumber}?`,
-                    onOk: async () => {
-                      await api.deleteCase(r.id);
-                      message.success('Deleted');
-                      load();
-                    },
-                  });
-                }
-              },
-            }}
-          >
-            <Button size="small" type="text">⋮</Button>
-          </Dropdown>
-        </Space>
+        <CaseRowActions
+          c={r}
+          settings={settings}
+          onChanged={load}
+          onView={(c) => setSeriesPickCase(c)}
+          onEdit={(c) => setEditCase(c)}
+          onOpenDrawer={(id) => setDrawerId(id)}
+        />
       ),
     },
   ];
@@ -331,7 +299,8 @@ export function CasesPage() {
         </Popover>
 
         <span style={{ flex: 1 }} />
-        <Button type="primary" onClick={() => setAddOpen(true)}>+ Add Case</Button>
+        <Button onClick={() => setUploadOpen(true)}>Upload study</Button>
+        <Button type="primary" onClick={() => { setEditCase(null); setAddOpen(true); }}>+ Add Case</Button>
       </div>
 
       <Table
@@ -357,15 +326,31 @@ export function CasesPage() {
       />
 
       <AddCaseModal
-        open={addOpen}
+        open={addOpen || !!editCase}
         settings={settings}
         referrers={referrers}
-        onClose={() => setAddOpen(false)}
-        onCreated={(c) => {
+        editCase={editCase}
+        onClose={() => { setAddOpen(false); setEditCase(null); }}
+        onSaved={(c) => {
+          const wasEdit = !!editCase;
           setAddOpen(false);
-          message.success(`Case ${c.caseNumber} created`);
+          setEditCase(null);
+          message.success(wasEdit ? `Case ${c.caseNumber} updated` : `Case ${c.caseNumber} created`);
           load();
-          setDrawerId(c.id);
+          if (!wasEdit) setDrawerId(c.id);
+        }}
+      />
+
+      <UploadStudyModal
+        open={uploadOpen}
+        settings={settings}
+        referrers={referrers}
+        onClose={() => setUploadOpen(false)}
+        onDone={(created) => {
+          setUploadOpen(false);
+          message.success(`Uploaded — ${created.length} case(s) created`);
+          load();
+          if (created[0]) setDrawerId(created[0].id);
         }}
       />
 

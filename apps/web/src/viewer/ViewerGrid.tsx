@@ -4,6 +4,9 @@ import {
   renderStackGrid,
   enterMpr,
   exitMpr,
+  enterVrt,
+  exitVrt,
+  setVrtPreset,
   applySlab,
   setInvert,
   resizeEngine,
@@ -23,20 +26,31 @@ export function ViewerGrid() {
     assignments,
     series,
     mpr,
+    vrt,
+    vrtPreset,
     projection,
     slabThicknessMm,
     invert,
+    showOverlay,
     activeViewportIndex,
     set,
   } = useViewer();
 
+  const mode = vrt ? 'vrt' : mpr ? 'mpr' : 'stack';
+
   const stackRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const mprRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const vrtRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+
+  const activeSeries = () => {
+    const uid = assignments[activeViewportIndex] ?? series[0]?.seriesInstanceUid;
+    return series.find((s) => s.seriesInstanceUid === uid) ?? series[0];
+  };
 
   // --- Stack grid reconciliation ---
   useEffect(() => {
-    if (mpr) return;
+    if (mode !== 'stack') return;
     const count = layout.rows * layout.cols;
     const cells: StackCell[] = [];
     for (let i = 0; i < count; i++) {
@@ -50,7 +64,7 @@ export function ViewerGrid() {
       });
     }
     if (cells.length) void renderStackGrid(cells);
-  }, [mpr, layout.rows, layout.cols, assignments, series]);
+  }, [mode, layout.rows, layout.cols, assignments, series]);
 
   // --- keep Cornerstone canvases matched to the container size ---
   useEffect(() => {
@@ -62,7 +76,6 @@ export function ViewerGrid() {
       raf = requestAnimationFrame(() => resizeEngine());
     });
     ro.observe(el);
-    // a couple of nudges once layout has settled after mount / mode switch
     const t1 = setTimeout(resizeEngine, 100);
     const t2 = setTimeout(resizeEngine, 600);
     return () => {
@@ -71,42 +84,67 @@ export function ViewerGrid() {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [mpr]);
+  }, [mode]);
 
   // --- MPR enter/exit ---
   useEffect(() => {
-    if (!mpr) {
+    if (mode !== 'mpr') {
       exitMpr();
       return;
     }
-    const activeUid = assignments[activeViewportIndex] ?? series[0]?.seriesInstanceUid;
-    const activeSeries = series.find((s) => s.seriesInstanceUid === activeUid) ?? series[0];
+    const s = activeSeries();
     const els = {
       axial: mprRefs.current['MPR_AXIAL'],
       sagittal: mprRefs.current['MPR_SAGITTAL'],
       coronal: mprRefs.current['MPR_CORONAL'],
     };
-    if (activeSeries && els.axial && els.sagittal && els.coronal) {
-      void enterMpr(activeSeries, {
-        axial: els.axial,
-        sagittal: els.sagittal,
-        coronal: els.coronal,
-      });
+    if (s && els.axial && els.sagittal && els.coronal) {
+      void enterMpr(s, { axial: els.axial, sagittal: els.sagittal, coronal: els.coronal });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mpr]);
+  }, [mode]);
+
+  // --- VRT enter/exit ---
+  useEffect(() => {
+    if (mode !== 'vrt') {
+      exitVrt();
+      return;
+    }
+    const s = activeSeries();
+    if (s && vrtRef.current) void enterVrt(s, vrtRef.current, vrtPreset);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'vrt') setVrtPreset(vrtPreset);
+  }, [mode, vrtPreset]);
 
   // --- Slab / projection ---
   useEffect(() => {
-    if (mpr) applySlab(projection, slabThicknessMm);
-  }, [mpr, projection, slabThicknessMm]);
+    if (mode === 'mpr') applySlab(projection, slabThicknessMm);
+  }, [mode, projection, slabThicknessMm]);
 
   // --- Invert ---
   useEffect(() => {
     setInvert(invert);
   }, [invert]);
 
-  if (mpr) {
+  if (mode === 'vrt') {
+    return (
+      <div className="viewer-grid" ref={gridRef} style={{ gridTemplateColumns: '1fr' }}>
+        <div className="viewport-cell">
+          <div className="viewport-label">3D · {vrtPreset}</div>
+          <div
+            className="cs-viewport"
+            ref={(el) => (vrtRef.current = el)}
+            onContextMenu={(e) => e.preventDefault()}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'mpr') {
     const labels: Record<string, string> = {
       MPR_AXIAL: 'AXIAL',
       MPR_SAGITTAL: 'SAGITTAL',
@@ -157,7 +195,7 @@ export function ViewerGrid() {
               ref={(el) => (stackRefs.current[i] = el)}
               onContextMenu={(e) => e.preventDefault()}
             />
-            {s && (
+            {s && showOverlay && (
               <ViewportOverlay viewportId={stackViewportId(i)} series={s} />
             )}
           </div>

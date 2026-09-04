@@ -189,6 +189,111 @@ export function exitMpr(): void {
   }
 }
 
+// --- VRT (3D volume rendering) -----------------------------------------
+
+export const VRT_VIEWPORT = 'VRT_3D';
+
+export async function enterVrt(
+  series: LoadedSeries,
+  element: HTMLDivElement,
+  preset = 'CT-Bone',
+): Promise<void> {
+  const re = engine();
+  const group = ensureToolGroup();
+
+  for (const vp of re.getViewports()) {
+    if (vp.id.startsWith('STACK_') || (MPR_VIEWPORTS as readonly string[]).includes(vp.id)) {
+      try {
+        group.removeViewports(ENGINE_ID, vp.id);
+        re.disableElement(vp.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  re.setViewports([
+    {
+      viewportId: VRT_VIEWPORT,
+      type: (ViewportType as any).VOLUME_3D,
+      element,
+      defaultOptions: { background: [0, 0, 0] as [number, number, number] },
+    },
+  ] as never);
+
+  const volumeId = volumeIdFor(series.seriesInstanceUid);
+  let volume = cornerstone.cache.getVolume(volumeId);
+  if (!volume) {
+    volume = await volumeLoader.createAndCacheVolume(volumeId, {
+      imageIds: series.imageIds,
+    });
+  }
+  (volume as { load: () => void }).load();
+
+  await setVolumesForViewports(re, [{ volumeId }], [VRT_VIEWPORT]);
+
+  const vp = re.getViewport(VRT_VIEWPORT) as any;
+  try {
+    vp.setProperties({ preset });
+  } catch {
+    /* preset name unknown for this modality — leave default */
+  }
+  group.addViewport(VRT_VIEWPORT, ENGINE_ID);
+
+  // rotate with the primary button + wheel in 3D
+  for (const key of ['TrackballRotate', 'VolumeRotate']) {
+    const name = resolveToolName(key);
+    if (!name) continue;
+    try {
+      group.setToolActive(name, {
+        bindings:
+          key === 'TrackballRotate'
+            ? [{ mouseButton: csTools.Enums.MouseBindings.Primary }]
+            : [{ mouseButton: csTools.Enums.MouseBindings.Wheel }],
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  vp.resetCamera?.();
+  vp.render();
+}
+
+export function setVrtPreset(preset: string): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  const vp = re?.getViewport(VRT_VIEWPORT) as any;
+  if (!vp) return;
+  try {
+    vp.setProperties({ preset });
+    vp.render();
+  } catch {
+    /* ignore */
+  }
+}
+
+export function exitVrt(): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  if (!re) return;
+  const group = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+  try {
+    group?.removeViewports(ENGINE_ID, VRT_VIEWPORT);
+    re.disableElement(VRT_VIEWPORT);
+  } catch {
+    /* ignore */
+  }
+  for (const key of ['TrackballRotate', 'VolumeRotate']) {
+    const name = resolveToolName(key);
+    if (name && group) {
+      try {
+        group.setToolPassive(name);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 export function applySlab(projection: ProjectionMode, slabMm: number): void {
   const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
   if (!re) return;
@@ -236,6 +341,20 @@ export function resetActive(viewportId: string): void {
   (vp as any)?.resetCamera?.();
   (vp as any)?.resetProperties?.();
   vp?.render();
+}
+
+/** Reset zoom / pan / W-L on every live viewport. */
+export function resetAll(): void {
+  const re = getRenderingEngine(ENGINE_ID) as cornerstone.RenderingEngine | undefined;
+  re?.getViewports().forEach((vp) => {
+    try {
+      (vp as any).resetCamera?.();
+      (vp as any).resetProperties?.();
+      vp.render();
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 export function playCine(viewportId: string, fps: number): void {

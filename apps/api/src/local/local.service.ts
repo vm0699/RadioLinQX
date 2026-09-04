@@ -20,6 +20,11 @@ export async function scanDicomInstances(): Promise<LocalInstance[]> {
   return data;
 }
 
+/** Force the next scanDicomInstances() to re-read from disk (after an upload). */
+export function invalidateScanCache(): void {
+  cache = null;
+}
+
 export async function hasLocalData(): Promise<boolean> {
   return (await scanDicomInstances()).length > 0;
 }

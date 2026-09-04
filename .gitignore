@@ -30,3 +30,6 @@ Thumbs.db
 # JSON store (dev database)
 /data/
 apps/api/data/
+
+# runtime DICOM uploads (never commit patient data)
+sample-data/uploads/

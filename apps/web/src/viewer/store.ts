@@ -43,6 +43,9 @@ export interface ViewerState {
 
   primaryTool: PrimaryToolKey;
   mpr: boolean;
+  /** 3D volume rendering (VRT) — mutually exclusive with mpr */
+  vrt: boolean;
+  vrtPreset: string;
   projection: ProjectionMode;
   slabThicknessMm: number;
   referenceLines: boolean;
@@ -52,6 +55,7 @@ export interface ViewerState {
   cineFps: number;
 
   invert: boolean;
+  showOverlay: boolean;
 
   set: <K extends keyof ViewerState>(k: K, v: ViewerState[K]) => void;
   setLayout: (rows: number, cols: number) => void;
@@ -68,6 +72,8 @@ const initial = {
   activeViewportIndex: 0,
   primaryTool: 'WindowLevel' as PrimaryToolKey,
   mpr: false,
+  vrt: false,
+  vrtPreset: 'CT-Bone',
   projection: 'none' as ProjectionMode,
   slabThicknessMm: 0.5,
   referenceLines: false,
@@ -75,6 +81,7 @@ const initial = {
   cinePlaying: false,
   cineFps: 24,
   invert: false,
+  showOverlay: true,
 };
 
 export const useViewer = create<ViewerState>((set) => ({

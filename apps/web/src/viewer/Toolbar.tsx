@@ -1,5 +1,6 @@
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Dropdown, Slider, InputNumber, Select, Popover, Button, Tooltip } from 'antd';
+import { Dropdown, Slider, InputNumber, Select, Popover, Modal, Tooltip } from 'antd';
 import { useViewer, type ProjectionMode, type PrimaryToolKey } from './store';
 import { setPrimaryTool, MEASURE_MENU } from './tools';
 import {
@@ -8,13 +9,29 @@ import {
   playCine,
   stopCine,
   captureViewportPng,
+  resetAll,
+  ENGINE_ID,
 } from './renderingManager';
 import * as csTools from '@cornerstonejs/tools';
 import { getRenderingEngine } from '@cornerstonejs/core';
-import { ENGINE_ID } from './renderingManager';
 import { recordViewportWebM } from './videoExport';
 
-function ToolButton({
+const VRT_PRESETS = [
+  'CT-Bone', 'CT-Bones', 'CT-AAA', 'CT-Cardiac', 'CT-Chest-Contrast-Enhanced',
+  'CT-Chest-Vessels', 'CT-Coronary-Arteries', 'CT-Lung', 'CT-MIP',
+  'CT-Muscle', 'CT-Soft-Tissue', 'MR-Default', 'MR-MIP', 'MR-Angio',
+];
+
+const SHORTCUTS: [string, string][] = [
+  ['Left drag', 'active tool (W/L, Zoom, Pan, measure…)'],
+  ['Right drag', 'Window / Level'],
+  ['Middle drag', 'Pan'],
+  ['Mouse wheel', 'scroll stack / rotate in 3D'],
+  ['MPR', 'drag a crosshair to reslice the other planes'],
+  ['Delete', 'clears all annotations'],
+];
+
+function TB({
   label,
   active,
   disabled,
@@ -39,10 +56,14 @@ function ToolButton({
   );
 }
 
-export function Toolbar() {
+export function Toolbar({ onReport }: { onReport?: () => void }) {
   const navigate = useNavigate();
   const st = useViewer();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const activeStackVp = stackViewportId(st.activeViewportIndex);
+  const hasSeries = st.series.length > 0;
+  const in3dOrMpr = st.mpr || st.vrt;
 
   const pick = (tool: PrimaryToolKey) => {
     setPrimaryTool(tool);
@@ -58,6 +79,17 @@ export function Toolbar() {
     getRenderingEngine(ENGINE_ID)?.render();
   };
 
+  const toggleMpr = () => {
+    if (!st.mpr && st.vrt) st.set('vrt', false);
+    st.set('mpr', !st.mpr);
+  };
+  const toggleVrt = () => {
+    if (!st.vrt && st.mpr) st.set('mpr', false);
+    st.set('vrt', !st.vrt);
+  };
+
+  const scrollBy = (dx: number) => trackRef.current?.scrollBy({ left: dx, behavior: 'smooth' });
+
   const gridPopover = (
     <div className="grid-picker">
       {[1, 2, 3].map((r) => (
@@ -72,188 +104,175 @@ export function Toolbar() {
           ))}
         </div>
       ))}
-      <div className="dim" style={{ marginTop: 6 }}>
-        {st.layout.rows} × {st.layout.cols}
-      </div>
+      <div className="dim" style={{ marginTop: 6 }}>{st.layout.rows} × {st.layout.cols}</div>
     </div>
   );
 
   return (
-    <div className="toolbar">
-      <ToolButton label="Cases" onClick={() => navigate('/')} />
-      <span className="tb-sep" />
+    <div className="toolbar toolbar-scroll">
+      <button className="tb-chevron" onClick={() => scrollBy(-300)} aria-label="scroll left">‹</button>
+      <div className="tb-track" ref={trackRef}>
+        <TB label="Cases" onClick={() => navigate('/')} />
+        <span className="tb-sep" />
 
-      <ToolButton
-        label="Stack"
-        badge="L"
-        active={st.primaryTool === 'WindowLevel' && false}
-        onClick={() => pick('WindowLevel')}
-      />
-      <ToolButton
-        label="Zoom"
-        active={st.primaryTool === 'Zoom'}
-        onClick={() => pick('Zoom')}
-      />
-      <ToolButton
-        label="Pan"
-        active={st.primaryTool === 'Pan'}
-        onClick={() => pick('Pan')}
-      />
-      <ToolButton
-        label="W/L"
-        badge="R"
-        active={st.primaryTool === 'WindowLevel'}
-        onClick={() => pick('WindowLevel')}
-      />
-      <ToolButton label="Rotate" onClick={() => rotate(90)} />
+        <TB label="Stack" badge="L" onClick={() => pick('WindowLevel')} />
+        <TB label="Zoom" active={st.primaryTool === 'Zoom'} onClick={() => pick('Zoom')} />
+        <TB label="Pan" active={st.primaryTool === 'Pan'} onClick={() => pick('Pan')} />
+        <TB label="W/L" badge="R" active={st.primaryTool === 'WindowLevel'} onClick={() => pick('WindowLevel')} />
+        <TB label="Rotate" onClick={() => rotate(90)} />
 
-      <Dropdown
-        menu={{
-          items: MEASURE_MENU.map((m) => ({ key: m.key, label: m.label })),
-          onClick: ({ key }) => {
-            const entry = MEASURE_MENU.find((m) => m.key === key);
-            if (entry) pick(entry.toolKey as PrimaryToolKey);
-          },
-        }}
-      >
-        <span>
-          <ToolButton
-            label="Measure ▾"
-            active={MEASURE_MENU.some(
-              (m) => m.toolKey === st.primaryTool,
-            )}
+        <Dropdown
+          menu={{
+            items: MEASURE_MENU.map((m) => ({ key: m.key, label: m.label })),
+            onClick: ({ key }) => {
+              const e = MEASURE_MENU.find((m) => m.key === key);
+              if (e) pick(e.toolKey as PrimaryToolKey);
+            },
+          }}
+        >
+          <span><TB label="Measure ▾" active={MEASURE_MENU.some((m) => m.toolKey === st.primaryTool)} /></span>
+        </Dropdown>
+
+        <TB label="Delete" onClick={clearAnnotations} />
+
+        <Popover content={gridPopover} trigger="click" placement="bottom">
+          <span><TB label="Grid" disabled={in3dOrMpr} /></span>
+        </Popover>
+
+        <TB
+          label="Localizer"
+          active={st.referenceLines}
+          disabled={in3dOrMpr}
+          onClick={() => st.set('referenceLines', !st.referenceLines)}
+        />
+
+        <span className="tb-sep" />
+
+        <TB label="VRT" active={st.vrt} disabled={!hasSeries} onClick={toggleVrt} />
+        <TB label="MPR" active={st.mpr} disabled={!hasSeries} onClick={toggleMpr} />
+        <TB label="Cross" active={st.crosshairs} disabled={!st.mpr} onClick={() => st.set('crosshairs', !st.crosshairs)} />
+
+        <div className="tb-plane" aria-disabled={!st.mpr}>
+          {(['Ax', 'Cor', 'Sag'] as const).map((p) => (
+            <button key={p} className="tb-plane-btn" disabled={!st.mpr}>{p}</button>
+          ))}
+        </div>
+
+        {st.vrt ? (
+          <div className="tb-slab">
+            <Select
+              size="small"
+              value={st.vrtPreset}
+              onChange={(v) => st.set('vrtPreset', v)}
+              style={{ width: 170 }}
+              options={VRT_PRESETS.map((v) => ({ value: v, label: v }))}
+            />
+          </div>
+        ) : (
+          <div className={`tb-slab${st.mpr ? '' : ' disabled'}`}>
+            <Slider
+              min={0.5} max={200} step={0.5}
+              value={st.slabThicknessMm}
+              onChange={(v) => st.set('slabThicknessMm', v)}
+              disabled={!st.mpr}
+              style={{ width: 110 }}
+              tooltip={{ formatter: (v) => `Slab ${v} mm` }}
+            />
+            <Select
+              size="small"
+              value={st.projection}
+              disabled={!st.mpr}
+              onChange={(v: ProjectionMode) => st.set('projection', v)}
+              style={{ width: 92 }}
+              options={[
+                { value: 'none', label: 'No MIP' },
+                { value: 'mip', label: 'MIP' },
+                { value: 'minip', label: 'MinIP' },
+                { value: 'average', label: 'Average' },
+              ]}
+            />
+            <InputNumber
+              size="small" min={0.5} max={200} step={0.5}
+              value={st.slabThicknessMm}
+              disabled={!st.mpr}
+              onChange={(v) => v != null && st.set('slabThicknessMm', v)}
+              style={{ width: 64 }}
+              suffix="mm"
+            />
+          </div>
+        )}
+
+        <span className="tb-sep" />
+
+        <TB
+          label={st.cinePlaying ? 'Stop' : 'Play'}
+          active={st.cinePlaying}
+          disabled={in3dOrMpr}
+          onClick={() => {
+            if (st.cinePlaying) {
+              stopCine(activeStackVp);
+              st.set('cinePlaying', false);
+            } else {
+              playCine(activeStackVp, st.cineFps);
+              st.set('cinePlaying', true);
+            }
+          }}
+        />
+        <div className="tb-cine">
+          <Slider
+            min={1} max={60}
+            value={st.cineFps}
+            onChange={(v) => st.set('cineFps', v)}
+            style={{ width: 70 }}
+            tooltip={{ formatter: (v) => `${v} fps` }}
           />
-        </span>
-      </Dropdown>
+        </div>
 
-      <ToolButton label="Delete" onClick={clearAnnotations} />
+        <span className="tb-sep" />
 
-      <Popover content={gridPopover} trigger="click" placement="bottom">
-        <span>
-          <ToolButton label="Grid" disabled={st.mpr} />
-        </span>
-      </Popover>
-
-      <ToolButton
-        label="Localizer"
-        active={st.referenceLines}
-        disabled={st.mpr}
-        onClick={() => st.set('referenceLines', !st.referenceLines)}
-      />
-
-      <span className="tb-sep" />
-
-      <ToolButton
-        label="MPR"
-        active={st.mpr}
-        disabled={st.series.length === 0}
-        onClick={() => st.set('mpr', !st.mpr)}
-      />
-      <ToolButton
-        label="Cross"
-        active={st.crosshairs}
-        disabled={!st.mpr}
-        onClick={() => st.set('crosshairs', !st.crosshairs)}
-      />
-
-      {(['none', 'mip', 'minip', 'average'] as ProjectionMode[]).length > 0 && null}
-
-      <div className="tb-plane" aria-disabled={!st.mpr}>
-        {(['Ax', 'Cor', 'Sag'] as const).map((p) => (
-          <button key={p} className="tb-plane-btn" disabled={!st.mpr}>
-            {p}
-          </button>
-        ))}
-      </div>
-
-      <div className={`tb-slab${st.mpr ? '' : ' disabled'}`}>
-        <Slider
-          min={0.5}
-          max={200}
-          step={0.5}
-          value={st.slabThicknessMm}
-          onChange={(v) => st.set('slabThicknessMm', v)}
-          disabled={!st.mpr}
-          style={{ width: 120 }}
-          tooltip={{ formatter: (v) => `Slab ${v} mm` }}
-        />
-        <Select
-          size="small"
-          value={st.projection}
-          disabled={!st.mpr}
-          onChange={(v: ProjectionMode) => st.set('projection', v)}
-          style={{ width: 92 }}
-          options={[
-            { value: 'none', label: 'No MIP' },
-            { value: 'mip', label: 'MIP' },
-            { value: 'minip', label: 'MinIP' },
-            { value: 'average', label: 'Average' },
-          ]}
-        />
-        <InputNumber
-          size="small"
-          min={0.5}
-          max={200}
-          step={0.5}
-          value={st.slabThicknessMm}
-          disabled={!st.mpr}
-          onChange={(v) => v != null && st.set('slabThicknessMm', v)}
-          style={{ width: 64 }}
-          suffix="mm"
-        />
-      </div>
-
-      <span className="tb-sep" />
-
-      <ToolButton
-        label={st.cinePlaying ? 'Stop' : 'Play'}
-        active={st.cinePlaying}
-        onClick={() => {
-          if (st.cinePlaying) {
-            stopCine(activeStackVp);
-            st.set('cinePlaying', false);
-          } else {
-            playCine(activeStackVp, st.cineFps);
-            st.set('cinePlaying', true);
-          }
-        }}
-      />
-      <div className="tb-cine">
-        <Slider
-          min={1}
-          max={60}
-          value={st.cineFps}
-          onChange={(v) => st.set('cineFps', v)}
-          style={{ width: 80 }}
-          tooltip={{ formatter: (v) => `${v} fps` }}
-        />
-      </div>
-
-      <Tooltip title="Capture current frame as PNG">
-        <span>
-          <ToolButton
-            label="Capture"
-            onClick={() => {
+        <Tooltip title="Export a short clip as WebM">
+          <span><TB label="Export Video" onClick={() => recordViewportWebM(activeStackVp, 4000)} /></span>
+        </Tooltip>
+        <Tooltip title="Save current frame as PNG">
+          <span>
+            <TB label="Capture" onClick={() => {
               const url = captureViewportPng(activeStackVp);
               if (url) {
                 const a = document.createElement('a');
-                a.href = url;
-                a.download = 'capture.png';
-                a.click();
+                a.href = url; a.download = 'capture.png'; a.click();
               }
-            }}
-          />
-        </span>
-      </Tooltip>
+            }} />
+          </span>
+        </Tooltip>
 
-      <Button
-        size="small"
-        type="primary"
-        ghost
-        onClick={() => recordViewportWebM(activeStackVp, 4000)}
+        <TB label="Overlay" active={st.showOverlay} onClick={() => st.set('showOverlay', !st.showOverlay)} />
+        <TB label="Ref Lines" active={st.referenceLines} disabled={in3dOrMpr} onClick={() => st.set('referenceLines', !st.referenceLines)} />
+        <TB label="Reset" onClick={resetAll} />
+        <TB label="Compare" onClick={() => st.setLayout(1, 2)} />
+        <TB label="Full" onClick={() => {
+          const el = document.documentElement;
+          if (document.fullscreenElement) document.exitFullscreen();
+          else el.requestFullscreen?.();
+        }} />
+        <TB label="Report" onClick={() => onReport?.()} />
+        <TB label="Shortcuts" onClick={() => setShortcutsOpen(true)} />
+      </div>
+      <button className="tb-chevron" onClick={() => scrollBy(300)} aria-label="scroll right">›</button>
+
+      <Modal
+        title="Viewer shortcuts"
+        open={shortcutsOpen}
+        onCancel={() => setShortcutsOpen(false)}
+        footer={null}
       >
-        Export Video
-      </Button>
+        <table className="shortcuts-table">
+          <tbody>
+            {SHORTCUTS.map(([k, v]) => (
+              <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </Modal>
     </div>
   );
 }

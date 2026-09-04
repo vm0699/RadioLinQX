@@ -128,6 +128,7 @@ export function ensureToolGroup(): NonNullable<
   add('Crosshairs');
   add('ReferenceLines');
   add('VolumeRotate');
+  add('TrackballRotate');
   // annotations
   for (const t of [
     'Length',
