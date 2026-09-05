@@ -11,23 +11,30 @@ import {
   Put,
   Query,
   Res,
+  UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { createReadStream } from 'fs';
 import { promises as fsp } from 'fs';
 import * as path from 'path';
 import archiver = require('archiver');
+import * as mammoth from 'mammoth';
 import { CasesService, type CaseQuery } from './cases.service';
 import type { CaseRecord } from './case.types';
+import { buildReportDocx, parseReportText } from './report-docx';
+import { SettingsService } from '../settings/settings.service';
 import { scanDicomInstances, sampleDir } from '../local/local.service';
 import { dataDir } from '../store/json-store';
 
 @Controller('api/cases')
 export class CasesController {
-  constructor(private readonly cases: CasesService) {}
+  constructor(
+    private readonly cases: CasesService,
+    private readonly settings: SettingsService,
+  ) {}
 
   @Get()
   list(@Query() query: CaseQuery) {
@@ -128,6 +135,41 @@ export class CasesController {
         r?.signedBy ? `\nElectronically signed by ${r.signedBy} — ${r.signedAt}` : '',
       ].join('\n'),
     );
+  }
+
+  /** The report as a Word (.docx) letterhead — pre-filled with whatever has
+   *  been authored so far, ready to hand to the doctor for editing offline. */
+  @Get(':id/report.docx')
+  async reportDocx(@Param('id') id: string, @Res() res: Response) {
+    const c = await this.cases.get(id);
+    if (!c) throw new NotFoundException();
+    const settings = await this.settings.get();
+    const buf = await buildReportDocx(c, settings);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${c.caseNumber}-report.docx"`,
+    );
+    res.send(buf);
+  }
+
+  /** Re-import a doctor-edited .docx: pulls the section text back out and
+   *  saves it as the case's report draft (same effect as "Save draft"). */
+  @Post(':id/report/import')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 25 * 1024 * 1024 } }))
+  async importReportDocx(
+    @Param('id') id: string,
+    @UploadedFile() file: { buffer: Buffer; originalname: string } | undefined,
+  ) {
+    if (!file) throw new BadRequestException('no file');
+    const { value: text } = await mammoth.extractRawText({ buffer: file.buffer });
+    const parsed = parseReportText(text);
+    const c = await this.cases.saveReport(id, parsed, 'save');
+    if (!c) throw new NotFoundException();
+    return c;
   }
 
   // ---- attachments ----

@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Drawer, Descriptions, Tag, Select, Button, Input, Space, Divider, App as AntdApp,
-  Segmented, Spin, List,
+  Segmented, Spin, List, Popover,
 } from 'antd';
-import { PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
+import {
+  PaperClipOutlined, DownloadOutlined, FileWordOutlined, UploadOutlined, WhatsAppOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
   api, type AppSettings, type CaseView, type CaseReport, type ReferringDoctor,
 } from '../../api/client';
 import { StatusTag } from './cells';
 import { CaseHistoryPopover } from './CaseHistoryPopover';
+import { WhatsAppSharePopover } from './WhatsAppSharePopover';
 
 const BLANK: CaseReport = {
   clinicalHistory: '', technique: '', findings: '', impression: '', updatedAt: '',
@@ -36,7 +39,9 @@ export function CaseDrawer({
   const [report, setReport] = useState<CaseReport>(BLANK);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [importingDocx, setImportingDocx] = useState(false);
   const attInput = useRef<HTMLInputElement>(null);
+  const reportFileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!caseId) {
@@ -80,6 +85,23 @@ export function CaseDrawer({
       message.error(String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const importReportDocx = async (file: File) => {
+    if (!c) return;
+    setImportingDocx(true);
+    try {
+      const updated = await api.importReportDocx(c.id, file);
+      setC(updated);
+      setReport(updated.report ?? BLANK);
+      onChanged();
+      message.success('Report updated from the uploaded Word document');
+    } catch (e) {
+      message.error(String((e as Error).message || e));
+    } finally {
+      setImportingDocx(false);
+      if (reportFileInput.current) reportFileInput.current.value = '';
     }
   };
 
@@ -182,6 +204,34 @@ export function CaseDrawer({
 
           {pane === 'report' && (
             <>
+              <div className="letterhead">
+                <div className="letterhead-name">{settings?.scanCenter.name ?? 'Scan Centre'}</div>
+                <div className="letterhead-meta">
+                  {[settings?.scanCenter.contactEmail, settings?.scanCenter.contactPhone]
+                    .filter(Boolean)
+                    .join('  ·  ')}
+                </div>
+                <div className="letterhead-hr" />
+                <div className="letterhead-facts">
+                  <span><b>Patient:</b> {c.patientName} ({c.patientId})</span>
+                  <span><b>Age/Sex:</b> {c.patientAge ?? '—'}/{c.patientSex ?? '—'}</span>
+                  <span><b>Case No.:</b> {c.caseNumber}</span>
+                  <span><b>Study:</b> {c.scanType} — {c.studyDescription ?? (c.bodyParts.join(', ') || '—')}</span>
+                </div>
+                {['clinicalHistory', 'technique', 'findings', 'impression'].map((k) => (
+                  <div className="letterhead-section" key={k}>
+                    <div className="letterhead-title">{k.replace(/([A-Z])/g, ' $1')}</div>
+                    <div className="letterhead-body">{(report as any)[k] || '—'}</div>
+                  </div>
+                ))}
+                {c.report?.signedBy && (
+                  <p className="dim" style={{ marginTop: 10, fontStyle: 'italic' }}>
+                    Electronically signed by {c.report.signedBy} on{' '}
+                    {dayjs(c.report.signedAt).format('DD MMM YY, HH:mm')}
+                  </p>
+                )}
+              </div>
+
               {['clinicalHistory', 'technique', 'findings', 'impression'].map((k) => (
                 <div key={k} style={{ marginBottom: 12 }}>
                   <label className="fld-label" style={{ textTransform: 'capitalize' }}>
@@ -195,12 +245,48 @@ export function CaseDrawer({
                   />
                 </div>
               ))}
-              {c.report?.signedBy && (
-                <p className="dim">
-                  Signed by {c.report.signedBy} on{' '}
-                  {dayjs(c.report.signedAt).format('DD MMM YY, HH:mm')}
-                </p>
-              )}
+
+              <Space wrap style={{ marginBottom: 14 }}>
+                <Button
+                  icon={<FileWordOutlined />}
+                  href={api.caseReportDocxUrl(c.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Download Word (.docx)
+                </Button>
+                <input
+                  ref={reportFileInput}
+                  type="file"
+                  accept=".docx"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importReportDocx(f);
+                  }}
+                />
+                <Button
+                  icon={<UploadOutlined />}
+                  loading={importingDocx}
+                  onClick={() => reportFileInput.current?.click()}
+                >
+                  Upload edited Word doc
+                </Button>
+                <Popover
+                  trigger="click"
+                  placement="bottomLeft"
+                  title="Share report on WhatsApp"
+                  content={
+                    <WhatsAppSharePopover
+                      phoneDefault={c.referringDoctorMobile || c.patientMobile}
+                      text={`${c.caseNumber} — ${c.patientName}: radiology report.\nDownload: ${api.caseReportDocxUrl(c.id)}`}
+                    />
+                  }
+                >
+                  <Button icon={<WhatsAppOutlined />}>Share via WhatsApp</Button>
+                </Popover>
+              </Space>
+
               <Space>
                 {c.status === 'REPORTED' ? (
                   <Button

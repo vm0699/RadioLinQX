@@ -236,6 +236,17 @@ export const api = {
   /** absolute URL for the zip download (opened in a new tab) */
   caseDownloadUrl: (id: string) => `${API_BASE}/api/cases/${id}/download`,
   caseReportTxtUrl: (id: string) => `${API_BASE}/api/cases/${id}/report.txt`,
+  caseReportDocxUrl: (id: string) => `${API_BASE}/api/cases/${id}/report.docx`,
+  importReportDocx: async (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    const res = await fetch(`${API_BASE}/api/cases/${id}/report/import`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || `${res.status}`);
+    return res.json() as Promise<CaseView>;
+  },
   linkCases: (id: string, otherId: string, unlink = false) =>
     post<CaseView>(`/api/cases/${id}/link`, { otherId, unlink }),
   caseHistory: (id: string) => get<CaseEvent[]>(`/api/cases/${id}/history`),
