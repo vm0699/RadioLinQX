@@ -34,7 +34,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 #root > .ant-app { height: 100%; }
 
 body {
@@ -55,15 +55,25 @@ a { color: var(--primary); }
 }
 
 /* ================= dashboard shell ================= */
-.shell { min-height: 100%; display: flex; flex-direction: column; background: var(--bg); }
+/* Fixed-height app shell: topbar is a normal (non-scrolling) flex item,
+   .content is the ONLY scroll region. This avoids any ambiguity around
+   whole-document scroll + position:sticky (which can visually desync from
+   the DOM during fast/emulated scrolling). */
+.shell {
+  height: 100vh; height: 100dvh;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
 
 .topbar {
   display: flex; align-items: center; gap: 28px;
   height: 58px; padding: 0 22px;
+  flex: 0 0 auto;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
-  position: sticky; top: 0; z-index: 50;
+  z-index: 50;
 }
 .brand {
   display: flex; align-items: center; gap: 9px;
@@ -96,7 +106,12 @@ a { color: var(--primary); }
   background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   color: #fff; border: 0; font-weight: 700; font-size: 12px;
 }
-.content { flex: 1; min-height: 0; }
+.content {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
 
 /* ---------- filter bar ---------- */
 .filter-bar {

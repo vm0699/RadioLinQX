@@ -316,6 +316,7 @@ export function CasesPage() {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        scroll={{ x: 'max-content' }}
         onChange={(_p, _f, sorter: any) => {
           if (sorter?.field) {
             // server sort hook (only uploadedAt wired)
