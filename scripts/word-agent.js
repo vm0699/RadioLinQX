@@ -75,36 +75,59 @@ function postMultipart(url, filename, buf) {
   });
 }
 
+// ── Safe file reading with retry on EBUSY ────────────────────────────────────
+
+async function readFileWithRetry(filePath, maxRetries = 6, delayMs = 300) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return fs.readFileSync(filePath);
+    } catch (e) {
+      if ((e.code === 'EBUSY' || e.code === 'EPERM') && i < maxRetries - 1) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 // ── Watch + upload ────────────────────────────────────────────────────────────
 
 function startWatching(caseId, localPath) {
-  // Stop any existing watcher for this case
   stopWatching(caseId);
 
   let debounce = null;
+  let isUploading = false;
+  let lastHash = '';
+
   const watcher = fs.watch(localPath, () => {
     clearTimeout(debounce);
     debounce = setTimeout(async () => {
-      // Wait a bit more to ensure Word has finished writing
-      await new Promise(r => setTimeout(r, 800));
+      if (isUploading) return;
+      isUploading = true;
       try {
-        const buf = fs.readFileSync(localPath);
-        if (buf.length < 1000) return; // skip tiny/temp files Word writes during save
-        console.log('[agent] File changed (' + buf.length + ' bytes) - uploading to API...');
-        const { status } = await postMultipart(
+        // Give Word a brief moment to finish flushing its disk write
+        await new Promise((r) => setTimeout(r, 600));
+        const buf = await readFileWithRetry(localPath);
+        if (buf.length < 1000) return; // ignore temp/partial files
+
+        console.log('[agent] File saved by Word (' + buf.length + ' bytes) — uploading to RadioLinQ...');
+        const { status, body } = await postMultipart(
           API_BASE + '/api/cases/' + caseId + '/report/import',
           'report-' + caseId + '.docx',
           buf
         );
         if (status >= 200 && status < 300) {
-          console.log('[agent] Saved case ' + caseId + ' successfully!');
+          console.log('[agent] ✅ Case ' + caseId + ' auto-saved successfully!');
         } else {
-          console.error('[agent] API returned ' + status);
+          console.error('[agent] ⚠️ Upload returned ' + status + ':', body.slice(0, 100));
         }
       } catch (err) {
-        console.error('[agent] Upload error:', err.message);
+        console.error('[agent] Auto-save error:', err.message);
+      } finally {
+        isUploading = false;
       }
-    }, 600);
+    }, 500);
   });
 
   sessions.set(caseId, { watcher, localPath });
@@ -124,30 +147,39 @@ function stopWatching(caseId) {
 async function handleOpen(caseId, res) {
   console.log('[agent] Opening case ' + caseId + ' in Word...');
   try {
-    // Download the docx from the real API
-    const { status, body } = await fetchBuffer(API_BASE + '/api/cases/' + caseId + '/report.docx');
-    if (status !== 200) {
-      res.writeHead(502);
-      return res.end('API returned ' + status);
-    }
-
-    // Write to Documents\RadioLinQ-Reports (NOT temp — Word shows Save As for temp files)
     const localPath = path.join(WORK_DIR, 'report-' + caseId + '.docx');
 
-    // Close Word if it already has this file open (so it re-opens fresh from our updated docx)
-    const filename = path.basename(localPath);
-    exec('powershell -command "Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() }"');
-    await new Promise(r => setTimeout(r, 800)); // wait for Word to close
+    // Check if the file is already open / locked by Word
+    let isLocked = false;
+    if (fs.existsSync(localPath)) {
+      try {
+        const fd = fs.openSync(localPath, 'r+');
+        fs.closeSync(fd);
+      } catch (e) {
+        if (e.code === 'EBUSY' || e.code === 'EPERM') {
+          isLocked = true;
+        }
+      }
+    }
 
-    fs.writeFileSync(localPath, body);
-    // Remove read-only attribute (otherwise Word opens it as read-only and Ctrl+S shows Save As)
-    try { fs.chmodSync(localPath, 0o666); } catch {}
-    await new Promise(r => exec('attrib -r "' + localPath + '"', r));
-    // Remove "downloaded from internet" Zone.Identifier tag (prevents Protected View)
-    await new Promise(r => exec('powershell -command "Unblock-File -Path \'' + localPath + '\'"', r));
-    console.log('[agent] Saved, unblocked, writable: ' + localPath);
+    if (!isLocked) {
+      try {
+        const { status, body } = await fetchBuffer(API_BASE + '/api/cases/' + caseId + '/report.docx');
+        if (status === 200 && body && body.length > 0) {
+          fs.writeFileSync(localPath, body);
+          try { fs.chmodSync(localPath, 0o666); } catch {}
+          exec('attrib -r "' + localPath + '"');
+          exec('powershell -command "Unblock-File -Path \'' + localPath + '\'"');
+          console.log('[agent] Saved + unblocked: ' + localPath);
+        }
+      } catch (dlErr) {
+        console.warn('[agent] Download warning:', dlErr.message);
+      }
+    } else {
+      console.log('[agent] Document already open in Word, retaining current open file');
+    }
 
-    // Open with Word explicitly — more reliable than cmd /c start for .docx files
+    // Launch Word explicitly via WINWORD.EXE if available
     const wordPaths = [
       'C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE',
       'C:\\Program Files (x86)\\Microsoft Office\\root\\Office16\\WINWORD.EXE',
@@ -161,25 +193,28 @@ async function handleOpen(caseId, res) {
     if (wordExe) {
       exec('"' + wordExe + '" "' + localPath + '"', (err) => {
         if (err) console.error('[agent] WINWORD.EXE error:', err.message);
-        else console.log('[agent] Word opened via WINWORD.EXE: ' + localPath);
+        else console.log('[agent] Word launched via WINWORD.EXE: ' + localPath);
       });
     } else {
-      // Fallback: use shell association
       exec('cmd /c start "" "' + localPath + '"', (err) => {
-        if (err) console.error('[agent] Failed to open Word:', err.message);
-        else console.log('[agent] Word opened via shell: ' + localPath);
+        if (err) console.error('[agent] Shell open error:', err.message);
+        else console.log('[agent] Word launched via shell: ' + localPath);
       });
     }
 
-    // Start watching for Ctrl+S saves
+    // Start watching for Ctrl+S
     startWatching(caseId, localPath);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, localPath, message: 'Word opened. Ctrl+S inside Word auto-saves to RadioLinQ — no Save As dialog.' }));
+    res.end(JSON.stringify({
+      ok: true,
+      localPath,
+      message: 'Word opened. Ctrl+S inside Word auto-saves to RadioLinQ — no Save As dialog.',
+    }));
   } catch (err) {
     console.error('[agent] Open error:', err.message);
-    res.writeHead(500);
-    res.end(err.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
   }
 }
 
