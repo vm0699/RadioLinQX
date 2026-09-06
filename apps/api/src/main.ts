@@ -14,7 +14,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: config.corsOrigin,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
     allowedHeaders: [
       'Origin',
       'Accept',
@@ -22,7 +22,14 @@ async function bootstrap() {
       'Authorization',
       'Cache-Control',
       'X-Requested-With',
+      'Range',
+      'DAV',
+      'If',
+      'Lock-Token',
+      'Timeout',
+      'Depth',
     ],
+    exposedHeaders: ['DAV', 'Lock-Token', 'MS-Author-Via', 'Content-Range'],
   });
 
   // --- DICOMweb reverse proxy -------------------------------------------------
