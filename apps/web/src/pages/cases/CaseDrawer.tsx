@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   PaperClipOutlined, DownloadOutlined, FileWordOutlined, UploadOutlined, WhatsAppOutlined,
-  SyncOutlined, CheckCircleOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
@@ -43,21 +43,10 @@ export function CaseDrawer({
   const [importingDocx, setImportingDocx] = useState(false);
   const [openingWord, setOpeningWord] = useState(false);
   const [wordSessionActive, setWordSessionActive] = useState(false);
-  const [usingLocalAgent, setUsingLocalAgent] = useState(false);
   const [lastWordSyncAt, setLastWordSyncAt] = useState<string | null>(null);
   const lastKnownSyncRef = useRef<string | null>(null);
   const attInput = useRef<HTMLInputElement>(null);
   const reportFileInput = useRef<HTMLInputElement>(null);
-
-  // Check if local Word Sync Agent is running on localhost:4820
-  useEffect(() => {
-    fetch('http://127.0.0.1:4820/health')
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.ok) setUsingLocalAgent(true);
-      })
-      .catch(() => setUsingLocalAgent(false));
-  }, []);
 
   useEffect(() => {
     if (!caseId) {
@@ -79,6 +68,20 @@ export function CaseDrawer({
       .finally(() => setLoading(false));
   }, [caseId, message]);
 
+  // 1-Click Keyboard Shortcut: Ctrl+S / Cmd+S saves report draft immediately
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (c && c.status !== 'REPORTED' && !saving) {
+          saveReport('save');
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [c, report, saving]);
+
   // Live background poll and focus listener for Word auto-sync
   useEffect(() => {
     if (!caseId) return;
@@ -87,37 +90,11 @@ export function CaseDrawer({
 
     const checkSync = async () => {
       try {
-        // 1. Check local Word Agent (127.0.0.1:4820)
-        try {
-          const aRes = await fetch(`http://127.0.0.1:4820/session/${caseId}`);
-          if (aRes.ok) {
-            const aData = await aRes.json();
-            if (aData.active) {
-              setWordSessionActive(true);
-              setUsingLocalAgent(true);
-              if (aData.lastSyncedAt && aData.lastSyncedAt !== lastKnownSyncRef.current) {
-                lastKnownSyncRef.current = aData.lastSyncedAt;
-                setLastWordSyncAt(aData.lastSyncedAt);
-                if (aData.report) {
-                  setReport(aData.report);
-                }
-                const updated = await api.getCase(caseId);
-                setC(updated);
-                if (updated.report) setReport(updated.report);
-                onChanged();
-                message.success(`Report auto-synced from Word (${dayjs(aData.lastSyncedAt).format('HH:mm:ss')})`);
-                return;
-              }
-            }
-          }
-        } catch {}
-
-        // 2. Check backend Word status
         const st = await api.getWordStatus(caseId);
-        if (st.active) {
+        if (st?.active) {
           setWordSessionActive(true);
         }
-        if (st.lastSavedAt && st.lastSavedAt !== lastKnownSyncRef.current) {
+        if (st?.lastSavedAt && st.lastSavedAt !== lastKnownSyncRef.current) {
           lastKnownSyncRef.current = st.lastSavedAt;
           setLastWordSyncAt(st.lastSavedAt);
           const updated = await api.getCase(caseId);
@@ -129,7 +106,7 @@ export function CaseDrawer({
       } catch {}
     };
 
-    timer = setInterval(checkSync, 2000);
+    timer = setInterval(checkSync, 3000);
     const onFocus = () => {
       checkSync();
     };
@@ -195,47 +172,10 @@ export function CaseDrawer({
         ? docxUrl
         : `${window.location.origin}${docxUrl}`;
 
-      let launchedViaAgent = false;
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 1200);
-        const res = await fetch('http://127.0.0.1:4820/open', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            caseId: c.id,
-            caseNumber: c.caseNumber,
-            patientName: c.patientName,
-            docxUrl: absoluteUrl,
-            apiBase: docxUrl.startsWith('http')
-              ? docxUrl.split('/api/')[0]
-              : window.location.origin,
-          }),
-          signal: ctrl.signal,
-        });
-        clearTimeout(t);
-        if (res.ok) {
-          launchedViaAgent = true;
-          setUsingLocalAgent(true);
-        }
-      } catch {}
-
-      if (!launchedViaAgent) {
-        // Fallback: Launch desktop Microsoft Word directly via URI scheme
-        window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
-        api.openInWord(c.id).catch(() => {});
-      }
-
+      window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
+      api.openInWord(c.id).catch(() => {});
       setWordSessionActive(true);
-      if (launchedViaAgent) {
-        message.success(
-          'Word launched with Local Auto-Sync! Type your report & press Ctrl+S to save silently.',
-        );
-      } else {
-        message.info(
-          'Word opened. Press Ctrl+S to save. (If Word asks Where to save, save anywhere & drop the file below).',
-        );
-      }
+      message.info('Opening Microsoft Word. When done, click "1-Click Import Word" or drop your saved docx below to save in 1 click.');
     } catch (e: any) {
       message.error(`Failed to launch Word: ${e.message || e}`);
     } finally {
@@ -370,50 +310,93 @@ export function CaseDrawer({
                 )}
               </div>
 
-              <div style={{ margin: '16px 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                <Button
-                  type="primary"
-                  size="middle"
-                  icon={<FileWordOutlined />}
-                  loading={openingWord}
-                  onClick={openInWord}
-                  disabled={c.status === 'REPORTED'}
-                  style={{ background: '#2563EB', fontWeight: 600 }}
-                >
-                  {usingLocalAgent ? 'Edit in Word (⚡ Silent Ctrl+S Sync)' : 'Edit in Word (Live Auto-Sync)'}
-                </Button>
-                {usingLocalAgent && (
-                  <Tag color="success" icon={<CheckCircleOutlined />}>
-                    Local Word Sync Ready
-                  </Tag>
-                )}
-                {wordSessionActive && (
-                  <Tag color="processing" icon={<SyncOutlined spin />}>
-                    Word Connected
-                  </Tag>
-                )}
+              <div style={{
+                background: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                borderRadius: 8,
+                padding: '12px 14px',
+                margin: '16px 0 12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 8
+              }}>
+                <Space wrap>
+                  <Button
+                    type="primary"
+                    size="middle"
+                    loading={saving}
+                    disabled={c.status === 'REPORTED'}
+                    onClick={() => saveReport('save')}
+                    style={{ background: '#10B981', borderColor: '#10B981', fontWeight: 600 }}
+                  >
+                    💾 Save Draft (1-Click / Ctrl+S)
+                  </Button>
+                  <Button
+                    type="primary"
+                    size="middle"
+                    loading={saving}
+                    disabled={c.status === 'REPORTED'}
+                    onClick={() => saveReport('sign')}
+                    style={{ background: '#2563EB', fontWeight: 600 }}
+                  >
+                    ✍️ Sign &amp; Finalise
+                  </Button>
+                  {c.status === 'REPORTED' && (
+                    <Button
+                      onClick={async () => {
+                        await api.updateCase(c.id, { status: 'DRAFT', reportedAt: undefined });
+                        refresh();
+                      }}
+                    >
+                      Reopen for editing
+                    </Button>
+                  )}
+                </Space>
+
+                <Space wrap>
+                  <Button
+                    icon={<UploadOutlined style={{ color: '#2563EB' }} />}
+                    loading={importingDocx}
+                    onClick={() => reportFileInput.current?.click()}
+                    style={{ fontWeight: 500 }}
+                  >
+                    1-Click Import Word (.docx)
+                  </Button>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    href={api.caseReportDocxUrl(c.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Download .docx
+                  </Button>
+                  <Button
+                    icon={<FileWordOutlined style={{ color: '#2563EB' }} />}
+                    loading={openingWord}
+                    onClick={openInWord}
+                  >
+                    Open in Word
+                  </Button>
+                </Space>
               </div>
 
-              {(wordSessionActive || lastWordSyncAt || usingLocalAgent) && (
+              {(wordSessionActive || lastWordSyncAt) && (
                 <Alert
-                  style={{ marginBottom: 14 }}
-                  type={usingLocalAgent ? 'success' : 'info'}
+                  style={{ marginBottom: 12 }}
+                  type="info"
                   showIcon
-                  icon={usingLocalAgent ? <CheckCircleOutlined /> : <SyncOutlined spin={wordSessionActive} />}
+                  icon={<SyncOutlined spin={wordSessionActive} />}
                   message={
-                    <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                      <div>
-                        <strong>{usingLocalAgent ? '⚡ Local Word Auto-Sync Active' : 'Word Live Auto-Sync'}:</strong>{' '}
-                        {usingLocalAgent
-                          ? 'Open in Microsoft Word & press Ctrl+S — saves directly back to the site without asking where to save.'
-                          : 'Type in Word and press Ctrl+S to save. (If Word asks Where to save, save the doc and drop it below to sync).'}
-                      </div>
+                    <Space wrap>
+                      <span>
+                        <strong>Word Document:</strong> Once you edit in Word, drop the file below or click <b>"1-Click Import Word (.docx)"</b> to save into the site immediately.
+                      </span>
                       {lastWordSyncAt && (
-                        <div>
-                          <Tag color="green">
-                            Last synced: {dayjs(lastWordSyncAt).format('HH:mm:ss')}
-                          </Tag>
-                        </div>
+                        <Tag color="green">
+                          Last synced: {dayjs(lastWordSyncAt).format('HH:mm:ss')}
+                        </Tag>
                       )}
                     </Space>
                   }
@@ -434,10 +417,10 @@ export function CaseDrawer({
                 }}
                 onClick={() => reportFileInput.current?.click()}
                 style={{
-                  border: '1px dashed #cbd5e1',
-                  borderRadius: 6,
-                  padding: '8px 12px',
-                  background: '#f8fafc',
+                  border: '1.5px dashed #3B82F6',
+                  borderRadius: 8,
+                  padding: '10px 14px',
+                  background: '#EFF6FF',
                   cursor: 'pointer',
                   textAlign: 'center',
                   marginBottom: 14,
@@ -445,9 +428,9 @@ export function CaseDrawer({
                 }}
               >
                 <Space size={8}>
-                  <UploadOutlined style={{ color: '#2563EB', fontSize: 15 }} />
-                  <span style={{ fontSize: 13, color: '#334155' }}>
-                    {importingDocx ? 'Importing Word document...' : 'Drop saved Word doc (.docx) here or click to import instantly'}
+                  <UploadOutlined style={{ color: '#2563EB', fontSize: 16 }} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: '#1E40AF' }}>
+                    {importingDocx ? 'Saving report into site in 1 click...' : 'Drop saved Word document (.docx) here to save into site in 1 click'}
                   </span>
                 </Space>
               </div>
