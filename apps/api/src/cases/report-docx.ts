@@ -11,6 +11,7 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
+import JSZip from 'jszip';
 import type { CaseRecord } from './case.types';
 import type { AppSettings } from '../settings/settings.service';
 
@@ -147,7 +148,46 @@ export async function buildReportDocx(
     ],
   });
 
-  return Packer.toBuffer(doc);
+  const raw = await Packer.toBuffer(doc);
+  return stripRevisions(raw);
+}
+
+/**
+ * Post-process: strip all tracked-change / revision markup from the generated
+ * .docx so Word opens cleanly without the Review pane or "27 revisions" notice.
+ */
+async function stripRevisions(buf: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buf);
+
+  // Patch word/settings.xml — disable trackChanges and remove rsid revision seeds
+  const settingsFile = zip.file('word/settings.xml');
+  if (settingsFile) {
+    let xml = await settingsFile.async('string');
+    // Remove <w:trackChanges/> element (enables track changes on open)
+    xml = xml.replace(/<w:trackChanges[^/]*(\/?>|>[\s\S]*?<\/w:trackChanges>)/g, '');
+    // Remove <w:rsids>...</w:rsids> block (revision session IDs)
+    xml = xml.replace(/<w:rsids[\s\S]*?<\/w:rsids>/g, '');
+    zip.file('word/settings.xml', xml);
+  }
+
+  // Patch word/document.xml — remove inserted/deleted revision runs
+  const docFile = zip.file('word/document.xml');
+  if (docFile) {
+    let xml = await docFile.async('string');
+    // Accept all insertions: unwrap <w:ins ...>content</w:ins> → keep content
+    xml = xml.replace(/<w:ins\b[^>]*>([\s\S]*?)<\/w:ins>/g, '$1');
+    // Remove all deletions: <w:del ...>...</w:del> → drop entirely
+    xml = xml.replace(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, '');
+    // Remove rPrChange / pPrChange blocks (formatting change records)
+    xml = xml.replace(/<w:rPrChange\b[^>]*>[\s\S]*?<\/w:rPrChange>/g, '');
+    xml = xml.replace(/<w:pPrChange\b[^>]*>[\s\S]*?<\/w:pPrChange>/g, '');
+    // Remove rsidR/rsidDel/rsidRPr attributes on runs (revision session IDs)
+    xml = xml.replace(/\s+w:rsid[A-Za-z]*="[^"]*"/g, '');
+    zip.file('word/document.xml', xml);
+  }
+
+  const result = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  return Buffer.from(result);
 }
 
 const HEADINGS = ['clinicalHistory', 'technique', 'findings', 'impression'] as const;
