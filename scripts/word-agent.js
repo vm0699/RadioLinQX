@@ -133,20 +133,44 @@ async function handleOpen(caseId, res) {
 
     // Write to Documents\RadioLinQ-Reports (NOT temp — Word shows Save As for temp files)
     const localPath = path.join(WORK_DIR, 'report-' + caseId + '.docx');
+
+    // Close Word if it already has this file open (so it re-opens fresh from our updated docx)
+    const filename = path.basename(localPath);
+    exec('powershell -command "Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() }"');
+    await new Promise(r => setTimeout(r, 800)); // wait for Word to close
+
     fs.writeFileSync(localPath, body);
     console.log('[agent] Saved to ' + localPath);
 
-    // Open with Word (uses system default for .docx)
-    exec('cmd /c start "" "' + localPath + '"', (err) => {
-      if (err) console.error('[agent] Failed to open Word:', err.message);
-      else console.log('[agent] Word opened!');
-    });
+    // Open with Word explicitly — more reliable than cmd /c start for .docx files
+    const wordPaths = [
+      'C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE',
+      'C:\\Program Files (x86)\\Microsoft Office\\root\\Office16\\WINWORD.EXE',
+      'C:\\Program Files\\Microsoft Office\\Office16\\WINWORD.EXE',
+    ];
+    let wordExe = null;
+    for (const wp of wordPaths) {
+      if (fs.existsSync(wp)) { wordExe = wp; break; }
+    }
+
+    if (wordExe) {
+      exec('"' + wordExe + '" "' + localPath + '"', (err) => {
+        if (err) console.error('[agent] WINWORD.EXE error:', err.message);
+        else console.log('[agent] Word opened via WINWORD.EXE: ' + localPath);
+      });
+    } else {
+      // Fallback: use shell association
+      exec('cmd /c start "" "' + localPath + '"', (err) => {
+        if (err) console.error('[agent] Failed to open Word:', err.message);
+        else console.log('[agent] Word opened via shell: ' + localPath);
+      });
+    }
 
     // Start watching for Ctrl+S saves
     startWatching(caseId, localPath);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, localPath, message: 'Word opened. Ctrl+S inside Word will auto-save to RadioLinQ.' }));
+    res.end(JSON.stringify({ ok: true, localPath, message: 'Word opened. Ctrl+S inside Word auto-saves to RadioLinQ — no Save As dialog.' }));
   } catch (err) {
     console.error('[agent] Open error:', err.message);
     res.writeHead(500);
