@@ -133,43 +133,33 @@ export function CaseDrawer({
     if (!c) return;
     setOpeningWord(true);
     try {
-      // Check if the local sync agent is running on port 4820
+      // Check if local sync agent is running on port 4820
       let agentRunning = false;
       try {
-        const probe = await fetch('http://127.0.0.1:4820/health', { signal: AbortSignal.timeout(1500) });
+        const probe = await fetch('http://127.0.0.1:4820/health', { signal: AbortSignal.timeout(1000) });
         agentRunning = probe.ok;
       } catch {
         agentRunning = false;
       }
 
-      if (!agentRunning) {
-        message.error({
-          content: (
-            <span>
-              <b>Word Sync Agent is not running.</b><br />
-              Double-click <b>start-word-sync.bat</b> in the project folder, then try again.<br />
-              <span style={{ color: '#888', fontSize: 12 }}>
-                (Lets Ctrl+S in Word save directly to RadioLinQ — no Save As dialog)
-              </span>
-            </span>
-          ),
-          duration: 8,
-        });
-        return;
+      if (agentRunning) {
+        // Agent is running: download locally & auto-sync on Ctrl+S
+        const resp = await fetch(`http://127.0.0.1:4820/open/${c.id}`);
+        if (resp.ok) {
+          setWordSessionActive(true);
+          message.success('Word is opening! Press Ctrl+S inside Word to auto-save to RadioLinQ.');
+          return;
+        }
       }
 
-      // Ask agent to download docx locally and open Word with local file path
-      const resp = await fetch(`http://127.0.0.1:4820/open/${c.id}`);
-      if (!resp.ok) throw new Error('Agent returned ' + resp.status);
+      // Fallback: launch Word directly via ms-word protocol
+      const docxUrl = api.caseReportDocxUrl(c.id);
+      const absoluteUrl = docxUrl.startsWith('http')
+        ? docxUrl
+        : `${window.location.origin}${docxUrl}`;
+      window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
       setWordSessionActive(true);
-      message.success({
-        content: (
-          <span>
-            <b>Word is opening!</b> Press <b>Ctrl+S</b> inside Word to save directly to RadioLinQ — no Save As dialog.
-          </span>
-        ),
-        duration: 6,
-      });
+      message.info('Opening Word. Once you finish editing, drop the saved .docx into the blue box below to save.');
     } catch (e: any) {
       message.error(`Failed to open Word: ${e.message || e}`);
     } finally {
