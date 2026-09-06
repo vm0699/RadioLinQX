@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RadioLinQ Word Sync Agent
  *
  * Flow:
@@ -20,9 +20,10 @@ const { URL } = require('url');
 
 const PORT = 4820;
 const API_BASE = 'https://radiolinq-api.onrender.com';
-const TEMP_DIR = path.join(os.tmpdir(), 'RadioLinQ-Reports');
 
-if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
+// Use Documents folder — NOT system temp (AppData\Local\Temp causes Save As dialog in Word)
+const WORK_DIR = path.join(os.homedir(), 'Documents', 'RadioLinQ-Reports');
+if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
 // caseId -> { watcher, debounce, localPath }
 const sessions = new Map();
@@ -130,8 +131,8 @@ async function handleOpen(caseId, res) {
       return res.end('API returned ' + status);
     }
 
-    // Write to a temp file
-    const localPath = path.join(TEMP_DIR, 'report-' + caseId + '.docx');
+    // Write to Documents\RadioLinQ-Reports (NOT temp — Word shows Save As for temp files)
+    const localPath = path.join(WORK_DIR, 'report-' + caseId + '.docx');
     fs.writeFileSync(localPath, body);
     console.log('[agent] Saved to ' + localPath);
 
