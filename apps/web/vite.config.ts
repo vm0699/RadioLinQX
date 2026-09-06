@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // The API base the *browser* uses. In docker-compose builds this is baked in as
 // a build arg; in local `npm run dev` it defaults to the proxied same-origin.
@@ -11,6 +15,7 @@ export default defineConfig({
     alias: {
       // dicomweb-client imports the Node "events" builtin; give it a browser shim
       events: 'events',
+      xmlbuilder2: path.resolve(__dirname, 'src/shims/xmlbuilder2.ts'),
     },
     // Force one instance of each cornerstone package + dicom-parser so the tool
     // registry stays shared with ToolGroups.
