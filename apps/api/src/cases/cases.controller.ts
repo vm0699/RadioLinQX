@@ -148,14 +148,20 @@ export class CasesController {
     if (!c) throw new NotFoundException();
     const settings = await this.settings.get();
     const buf = await buildReportDocx(c, settings);
+    const lastMod = c.report?.updatedAt || c.reportedAt || c.uploadedAt || c.id;
+    const etag = `"${Buffer.from(lastMod).toString('base64')}"`;
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${c.caseNumber}-report.docx"`,
+      `inline; filename="${c.caseNumber}-report.docx"`,
     );
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', new Date(c.report?.updatedAt || c.uploadedAt || Date.now()).toUTCString());
+    res.setHeader('Content-Length', buf.length);
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.setHeader('DAV', '1, 2');
     res.setHeader('MS-Author-Via', 'DAV');
     res.send(buf);
@@ -168,29 +174,39 @@ export class CasesController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', async () => {
-      try {
-        const buffer = Buffer.concat(chunks);
-        if (!buffer.length) {
-          res.status(400).send('Empty document');
-          return;
+    try {
+      let buffer: Buffer;
+      if (Buffer.isBuffer((req as any).body)) {
+        buffer = (req as any).body;
+      } else {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req as any) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
         }
-        const { value: text } = await mammoth.extractRawText({ buffer });
-        const parsed = parseReportText(text);
-        const c = await this.cases.saveReport(id, parsed, 'save');
-        if (!c) {
-          res.status(404).send('Case not found');
-          return;
-        }
-        res.setHeader('DAV', '1, 2');
-        res.setHeader('MS-Author-Via', 'DAV');
-        res.status(200).json(c);
-      } catch (err: any) {
-        res.status(500).send(err.message);
+        buffer = Buffer.concat(chunks);
       }
-    });
+
+      if (!buffer.length) {
+        res.status(400).send('Empty document');
+        return;
+      }
+
+      const { value: text } = await mammoth.extractRawText({ buffer });
+      const parsed = parseReportText(text);
+      const c = await this.cases.saveReport(id, parsed, 'save');
+      if (!c) {
+        res.status(404).send('Case not found');
+        return;
+      }
+      const newLastMod = c.report?.updatedAt || c.reportedAt || c.uploadedAt || c.id;
+      const newEtag = `"${Buffer.from(newLastMod).toString('base64')}"`;
+      res.setHeader('DAV', '1, 2');
+      res.setHeader('MS-Author-Via', 'DAV');
+      res.setHeader('ETag', newEtag);
+      res.status(200).json(c);
+    } catch (err: any) {
+      res.status(500).send(err.message);
+    }
   }
 
   /** Open Microsoft Word on the workstation with report pre-filled, and start live auto-sync */

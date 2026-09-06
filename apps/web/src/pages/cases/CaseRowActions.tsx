@@ -147,10 +147,40 @@ export function CaseRowActions({
                 const absoluteUrl = docxUrl.startsWith('http')
                   ? docxUrl
                   : `${window.location.origin}${docxUrl}`;
-                window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
-                api.openInWord(c.id).catch(() => {});
+
+                let launchedViaAgent = false;
+                try {
+                  const ctrl = new AbortController();
+                  const t = setTimeout(() => ctrl.abort(), 1200);
+                  const res = await fetch('http://127.0.0.1:4820/open', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      caseId: c.id,
+                      caseNumber: c.caseNumber,
+                      patientName: c.patientName,
+                      docxUrl: absoluteUrl,
+                      apiBase: docxUrl.startsWith('http')
+                        ? docxUrl.split('/api/')[0]
+                        : window.location.origin,
+                    }),
+                    signal: ctrl.signal,
+                  });
+                  clearTimeout(t);
+                  if (res.ok) launchedViaAgent = true;
+                } catch {}
+
+                if (!launchedViaAgent) {
+                  window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
+                  api.openInWord(c.id).catch(() => {});
+                }
+
                 onOpenDrawer(c.id);
-                message.success(`Launching Word for ${c.caseNumber}... Press Ctrl+S to auto-sync!`);
+                message.success(
+                  launchedViaAgent
+                    ? `Word opened with Silent Auto-Sync for ${c.caseNumber}!`
+                    : `Launching Word for ${c.caseNumber}... Press Ctrl+S to auto-sync!`,
+                );
               } catch (err: any) {
                 message.error(`Failed to launch Word: ${err.message || err}`);
               }

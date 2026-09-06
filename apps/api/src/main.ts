@@ -38,6 +38,10 @@ async function bootstrap() {
       res.setHeader('DAV', '1, 2');
       res.setHeader('MS-Author-Via', 'DAV');
       res.setHeader('Allow', 'GET, HEAD, POST, PUT, OPTIONS, LOCK, UNLOCK, PROPFIND');
+      res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, LOCK, UNLOCK, PROPFIND');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+      res.setHeader('Access-Control-Expose-Headers', '*');
 
       if (req.method === 'OPTIONS') {
         res.status(200).end();

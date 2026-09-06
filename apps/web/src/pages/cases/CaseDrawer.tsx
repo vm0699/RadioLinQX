@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   PaperClipOutlined, DownloadOutlined, FileWordOutlined, UploadOutlined, WhatsAppOutlined,
-  SyncOutlined,
+  SyncOutlined, CheckCircleOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
@@ -43,10 +43,21 @@ export function CaseDrawer({
   const [importingDocx, setImportingDocx] = useState(false);
   const [openingWord, setOpeningWord] = useState(false);
   const [wordSessionActive, setWordSessionActive] = useState(false);
+  const [usingLocalAgent, setUsingLocalAgent] = useState(false);
   const [lastWordSyncAt, setLastWordSyncAt] = useState<string | null>(null);
   const lastKnownSyncRef = useRef<string | null>(null);
   const attInput = useRef<HTMLInputElement>(null);
   const reportFileInput = useRef<HTMLInputElement>(null);
+
+  // Check if local Word Sync Agent is running on localhost:4820
+  useEffect(() => {
+    fetch('http://127.0.0.1:4820/health')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.ok) setUsingLocalAgent(true);
+      })
+      .catch(() => setUsingLocalAgent(false));
+  }, []);
 
   useEffect(() => {
     if (!caseId) {
@@ -76,6 +87,32 @@ export function CaseDrawer({
 
     const checkSync = async () => {
       try {
+        // 1. Check local Word Agent (127.0.0.1:4820)
+        try {
+          const aRes = await fetch(`http://127.0.0.1:4820/session/${caseId}`);
+          if (aRes.ok) {
+            const aData = await aRes.json();
+            if (aData.active) {
+              setWordSessionActive(true);
+              setUsingLocalAgent(true);
+              if (aData.lastSyncedAt && aData.lastSyncedAt !== lastKnownSyncRef.current) {
+                lastKnownSyncRef.current = aData.lastSyncedAt;
+                setLastWordSyncAt(aData.lastSyncedAt);
+                if (aData.report) {
+                  setReport(aData.report);
+                }
+                const updated = await api.getCase(caseId);
+                setC(updated);
+                if (updated.report) setReport(updated.report);
+                onChanged();
+                message.success(`Report auto-synced from Word (${dayjs(aData.lastSyncedAt).format('HH:mm:ss')})`);
+                return;
+              }
+            }
+          }
+        } catch {}
+
+        // 2. Check backend Word status
         const st = await api.getWordStatus(caseId);
         if (st.active) {
           setWordSessionActive(true);
@@ -158,17 +195,47 @@ export function CaseDrawer({
         ? docxUrl
         : `${window.location.origin}${docxUrl}`;
 
-      // 1. Launch desktop Microsoft Word on user's machine using MS Office protocol
-      const msWordUri = `ms-word:ofe|u|${absoluteUrl}`;
-      window.location.href = msWordUri;
+      let launchedViaAgent = false;
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 1200);
+        const res = await fetch('http://127.0.0.1:4820/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            caseId: c.id,
+            caseNumber: c.caseNumber,
+            patientName: c.patientName,
+            docxUrl: absoluteUrl,
+            apiBase: docxUrl.startsWith('http')
+              ? docxUrl.split('/api/')[0]
+              : window.location.origin,
+          }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+        if (res.ok) {
+          launchedViaAgent = true;
+          setUsingLocalAgent(true);
+        }
+      } catch {}
 
-      // 2. Also notify local backend if running locally
-      api.openInWord(c.id).catch(() => {});
+      if (!launchedViaAgent) {
+        // Fallback: Launch desktop Microsoft Word directly via URI scheme
+        window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
+        api.openInWord(c.id).catch(() => {});
+      }
 
       setWordSessionActive(true);
-      message.success(
-        'Launching Microsoft Word on your computer... Type your report and press Ctrl+S to auto-sync back here.',
-      );
+      if (launchedViaAgent) {
+        message.success(
+          'Word launched with Local Auto-Sync! Type your report & press Ctrl+S to save silently.',
+        );
+      } else {
+        message.info(
+          'Word opened. Press Ctrl+S to save. (If Word asks Where to save, save anywhere & drop the file below).',
+        );
+      }
     } catch (e: any) {
       message.error(`Failed to launch Word: ${e.message || e}`);
     } finally {
@@ -313,35 +380,77 @@ export function CaseDrawer({
                   disabled={c.status === 'REPORTED'}
                   style={{ background: '#2563EB', fontWeight: 600 }}
                 >
-                  Edit in Word (Live Auto-Sync)
+                  {usingLocalAgent ? 'Edit in Word (⚡ Silent Ctrl+S Sync)' : 'Edit in Word (Live Auto-Sync)'}
                 </Button>
+                {usingLocalAgent && (
+                  <Tag color="success" icon={<CheckCircleOutlined />}>
+                    Local Word Sync Ready
+                  </Tag>
+                )}
                 {wordSessionActive && (
                   <Tag color="processing" icon={<SyncOutlined spin />}>
-                    Word Sync Connected
+                    Word Connected
                   </Tag>
                 )}
               </div>
 
-              {(wordSessionActive || lastWordSyncAt) && (
+              {(wordSessionActive || lastWordSyncAt || usingLocalAgent) && (
                 <Alert
                   style={{ marginBottom: 14 }}
-                  type="info"
+                  type={usingLocalAgent ? 'success' : 'info'}
                   showIcon
-                  icon={<SyncOutlined spin={wordSessionActive} />}
+                  icon={usingLocalAgent ? <CheckCircleOutlined /> : <SyncOutlined spin={wordSessionActive} />}
                   message={
-                    <Space wrap>
-                      <span>
-                        <strong>Word Auto-Sync:</strong> Type in Microsoft Word &amp; press <b>Ctrl+S</b> to update this report.
-                      </span>
+                    <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                      <div>
+                        <strong>{usingLocalAgent ? '⚡ Local Word Auto-Sync Active' : 'Word Live Auto-Sync'}:</strong>{' '}
+                        {usingLocalAgent
+                          ? 'Open in Microsoft Word & press Ctrl+S — saves directly back to the site without asking where to save.'
+                          : 'Type in Word and press Ctrl+S to save. (If Word asks Where to save, save the doc and drop it below to sync).'}
+                      </div>
                       {lastWordSyncAt && (
-                        <Tag color="green">
-                          Last synced: {dayjs(lastWordSyncAt).format('HH:mm:ss')}
-                        </Tag>
+                        <div>
+                          <Tag color="green">
+                            Last synced: {dayjs(lastWordSyncAt).format('HH:mm:ss')}
+                          </Tag>
+                        </div>
                       )}
                     </Space>
                   }
                 />
               )}
+
+              <div
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const f = e.dataTransfer.files?.[0];
+                  if (f && f.name.endsWith('.docx')) {
+                    importReportDocx(f);
+                  } else {
+                    message.warning('Please drop a valid .docx file');
+                  }
+                }}
+                onClick={() => reportFileInput.current?.click()}
+                style={{
+                  border: '1px dashed #cbd5e1',
+                  borderRadius: 6,
+                  padding: '8px 12px',
+                  background: '#f8fafc',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                  marginBottom: 14,
+                  transition: 'all 0.2s',
+                }}
+              >
+                <Space size={8}>
+                  <UploadOutlined style={{ color: '#2563EB', fontSize: 15 }} />
+                  <span style={{ fontSize: 13, color: '#334155' }}>
+                    {importingDocx ? 'Importing Word document...' : 'Drop saved Word doc (.docx) here or click to import instantly'}
+                  </span>
+                </Space>
+              </div>
 
               {['clinicalHistory', 'technique', 'findings', 'impression'].map((k) => (
                 <div key={k} style={{ marginBottom: 12 }}>

@@ -1,0 +1,9 @@
+{
+  "name": "radiolinq-root",
+  "private": true,
+  "description": "RadioLinQ Monorepo Root",
+  "scripts": {
+    "word-sync": "node scripts/word-agent.js",
+    "word-agent": "node scripts/word-agent.js"
+  }
+}
