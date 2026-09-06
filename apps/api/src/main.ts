@@ -32,6 +32,66 @@ async function bootstrap() {
     exposedHeaders: ['DAV', 'Lock-Token', 'MS-Author-Via', 'Content-Range'],
   });
 
+  // Support Microsoft Word WebDAV protocols (LOCK, UNLOCK, PROPFIND, OPTIONS)
+  app.use((req: any, res: any, next: any) => {
+    if (req.path && req.path.endsWith('/report.docx')) {
+      res.setHeader('DAV', '1, 2');
+      res.setHeader('MS-Author-Via', 'DAV');
+      res.setHeader('Allow', 'GET, HEAD, POST, PUT, OPTIONS, LOCK, UNLOCK, PROPFIND');
+
+      if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+      }
+      if (req.method === 'LOCK') {
+        const token = `urn:uuid:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        res.setHeader('Content-Type', 'application/xml; charset="utf-8"');
+        res.setHeader('Lock-Token', `<${token}>`);
+        res.status(200).send(`<?xml version="1.0" encoding="utf-8" ?>
+<D:prop xmlns:D="DAV:">
+  <D:lockdiscovery>
+    <D:activelock>
+      <D:locktype><D:write/></D:locktype>
+      <D:lockscope><D:exclusive/></D:lockscope>
+      <D:depth>0</D:depth>
+      <D:timeout>Second-3600</D:timeout>
+      <D:locktoken><D:href>${token}</D:href></D:locktoken>
+      <D:lockroot><D:href>${req.path}</D:href></D:lockroot>
+    </D:activelock>
+  </D:lockdiscovery>
+</D:prop>`);
+        return;
+      }
+      if (req.method === 'UNLOCK') {
+        res.status(204).end();
+        return;
+      }
+      if (req.method === 'PROPFIND') {
+        res.setHeader('Content-Type', 'application/xml; charset="utf-8"');
+        res.status(207).send(`<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>${req.path}</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype/>
+        <D:supportedlock>
+          <D:lockentry>
+            <D:lockscope><D:exclusive/></D:lockscope>
+            <D:locktype><D:write/></D:locktype>
+          </D:lockentry>
+        </D:supportedlock>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>`);
+        return;
+      }
+    }
+    next();
+  });
+
   // --- DICOMweb reverse proxy -------------------------------------------------
   // Only mounted when an Orthanc is configured. In the hosted deploy there is
   // no Orthanc and the frontend uses /api/local/* (mode "local") instead.

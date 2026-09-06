@@ -153,10 +153,21 @@ export function CaseDrawer({
     if (!c) return;
     setOpeningWord(true);
     try {
-      await api.openInWord(c.id);
+      const docxUrl = api.caseReportDocxUrl(c.id);
+      const absoluteUrl = docxUrl.startsWith('http')
+        ? docxUrl
+        : `${window.location.origin}${docxUrl}`;
+
+      // 1. Launch desktop Microsoft Word on user's machine using MS Office protocol
+      const msWordUri = `ms-word:ofe|u|${absoluteUrl}`;
+      window.location.href = msWordUri;
+
+      // 2. Also notify local backend if running locally
+      api.openInWord(c.id).catch(() => {});
+
       setWordSessionActive(true);
       message.success(
-        'Microsoft Word opened! Type in Word and press Ctrl+S — your edits will sync back automatically.',
+        'Launching Microsoft Word on your computer... Type your report and press Ctrl+S to auto-sync back here.',
       );
     } catch (e: any) {
       message.error(`Failed to launch Word: ${e.message || e}`);

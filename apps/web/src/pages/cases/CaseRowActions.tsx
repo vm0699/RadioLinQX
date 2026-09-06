@@ -143,9 +143,14 @@ export function CaseRowActions({
           onClick: async ({ key }) => {
             if (key === 'word') {
               try {
-                await api.openInWord(c.id);
+                const docxUrl = api.caseReportDocxUrl(c.id);
+                const absoluteUrl = docxUrl.startsWith('http')
+                  ? docxUrl
+                  : `${window.location.origin}${docxUrl}`;
+                window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
+                api.openInWord(c.id).catch(() => {});
                 onOpenDrawer(c.id);
-                message.success(`Word opened for ${c.caseNumber}. Press Ctrl+S to auto-sync!`);
+                message.success(`Launching Word for ${c.caseNumber}... Press Ctrl+S to auto-sync!`);
               } catch (err: any) {
                 message.error(`Failed to launch Word: ${err.message || err}`);
               }
