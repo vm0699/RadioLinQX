@@ -12,6 +12,7 @@ import {
   HistoryOutlined,
   LinkOutlined,
   FileTextOutlined,
+  FileWordOutlined,
 } from '@ant-design/icons';
 import { api, type CaseView, type AppSettings } from '../../api/client';
 import { CaseChatPopover } from './CaseChatPopover';
@@ -131,6 +132,7 @@ export function CaseRowActions({
           items: [
             { key: 'open', label: 'Open case details' },
             { key: 'assign', label: 'Assign radiologist' },
+            { key: 'word', label: 'Edit report in Word', icon: <FileWordOutlined style={{ color: '#2563EB' }} /> },
             reported
               ? { key: 'reopen', label: 'Reopen (mark pending)' }
               : { key: 'report', label: 'Open report editor' },
@@ -139,6 +141,15 @@ export function CaseRowActions({
             { key: 'delete', label: 'Delete', danger: true },
           ],
           onClick: async ({ key }) => {
+            if (key === 'word') {
+              try {
+                await api.openInWord(c.id);
+                onOpenDrawer(c.id);
+                message.success(`Word opened for ${c.caseNumber}. Press Ctrl+S to auto-sync!`);
+              } catch (err: any) {
+                message.error(`Failed to launch Word: ${err.message || err}`);
+              }
+            }
             if (key === 'open' || key === 'report' || key === 'assign' || key === 'history')
               onOpenDrawer(c.id);
             if (key === 'reopen') {

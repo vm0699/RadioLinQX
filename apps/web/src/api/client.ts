@@ -237,6 +237,10 @@ export const api = {
   caseDownloadUrl: (id: string) => `${API_BASE}/api/cases/${id}/download`,
   caseReportTxtUrl: (id: string) => `${API_BASE}/api/cases/${id}/report.txt`,
   caseReportDocxUrl: (id: string) => `${API_BASE}/api/cases/${id}/report.docx`,
+  openInWord: (id: string) =>
+    post<{ ok: boolean; message: string; filePath?: string }>(`/api/cases/${id}/word/open`),
+  getWordStatus: (id: string) =>
+    get<{ active: boolean; lastSavedAt?: string; filePath?: string }>(`/api/cases/${id}/word/status`),
   importReportDocx: async (id: string, file: File) => {
     const fd = new FormData();
     fd.append('file', file, file.name);

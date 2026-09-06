@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Drawer, Descriptions, Tag, Select, Button, Input, Space, Divider, App as AntdApp,
-  Segmented, Spin, List, Popover,
+  Segmented, Spin, List, Popover, Alert,
 } from 'antd';
 import {
   PaperClipOutlined, DownloadOutlined, FileWordOutlined, UploadOutlined, WhatsAppOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
@@ -40,12 +41,19 @@ export function CaseDrawer({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [importingDocx, setImportingDocx] = useState(false);
+  const [openingWord, setOpeningWord] = useState(false);
+  const [wordSessionActive, setWordSessionActive] = useState(false);
+  const [lastWordSyncAt, setLastWordSyncAt] = useState<string | null>(null);
+  const lastKnownSyncRef = useRef<string | null>(null);
   const attInput = useRef<HTMLInputElement>(null);
   const reportFileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!caseId) {
       setC(null);
+      setWordSessionActive(false);
+      setLastWordSyncAt(null);
+      lastKnownSyncRef.current = null;
       return;
     }
     setLoading(true);
@@ -59,6 +67,42 @@ export function CaseDrawer({
       .catch((e) => message.error(String(e)))
       .finally(() => setLoading(false));
   }, [caseId, message]);
+
+  // Live background poll and focus listener for Word auto-sync
+  useEffect(() => {
+    if (!caseId) return;
+
+    let timer: any = null;
+
+    const checkSync = async () => {
+      try {
+        const st = await api.getWordStatus(caseId);
+        if (st.active) {
+          setWordSessionActive(true);
+        }
+        if (st.lastSavedAt && st.lastSavedAt !== lastKnownSyncRef.current) {
+          lastKnownSyncRef.current = st.lastSavedAt;
+          setLastWordSyncAt(st.lastSavedAt);
+          const updated = await api.getCase(caseId);
+          setC(updated);
+          setReport(updated.report ?? BLANK);
+          onChanged();
+          message.success(`Report auto-synced from Word (${dayjs(st.lastSavedAt).format('HH:mm:ss')})`);
+        }
+      } catch {}
+    };
+
+    timer = setInterval(checkSync, 2000);
+    const onFocus = () => {
+      checkSync();
+    };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      if (timer) clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [caseId, onChanged, message]);
 
   const refresh = async () => {
     if (!caseId) return;
@@ -102,6 +146,22 @@ export function CaseDrawer({
     } finally {
       setImportingDocx(false);
       if (reportFileInput.current) reportFileInput.current.value = '';
+    }
+  };
+
+  const openInWord = async () => {
+    if (!c) return;
+    setOpeningWord(true);
+    try {
+      await api.openInWord(c.id);
+      setWordSessionActive(true);
+      message.success(
+        'Microsoft Word opened! Type in Word and press Ctrl+S — your edits will sync back automatically.',
+      );
+    } catch (e: any) {
+      message.error(`Failed to launch Word: ${e.message || e}`);
+    } finally {
+      setOpeningWord(false);
     }
   };
 
@@ -231,6 +291,46 @@ export function CaseDrawer({
                   </p>
                 )}
               </div>
+
+              <div style={{ margin: '16px 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                <Button
+                  type="primary"
+                  size="middle"
+                  icon={<FileWordOutlined />}
+                  loading={openingWord}
+                  onClick={openInWord}
+                  disabled={c.status === 'REPORTED'}
+                  style={{ background: '#2563EB', fontWeight: 600 }}
+                >
+                  Edit in Word (Live Auto-Sync)
+                </Button>
+                {wordSessionActive && (
+                  <Tag color="processing" icon={<SyncOutlined spin />}>
+                    Word Sync Connected
+                  </Tag>
+                )}
+              </div>
+
+              {(wordSessionActive || lastWordSyncAt) && (
+                <Alert
+                  style={{ marginBottom: 14 }}
+                  type="info"
+                  showIcon
+                  icon={<SyncOutlined spin={wordSessionActive} />}
+                  message={
+                    <Space wrap>
+                      <span>
+                        <strong>Word Auto-Sync:</strong> Type in Microsoft Word &amp; press <b>Ctrl+S</b> to update this report.
+                      </span>
+                      {lastWordSyncAt && (
+                        <Tag color="green">
+                          Last synced: {dayjs(lastWordSyncAt).format('HH:mm:ss')}
+                        </Tag>
+                      )}
+                    </Space>
+                  }
+                />
+              )}
 
               {['clinicalHistory', 'technique', 'findings', 'impression'].map((k) => (
                 <div key={k} style={{ marginBottom: 12 }}>

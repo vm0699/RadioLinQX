@@ -10,13 +10,14 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
   UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { createReadStream } from 'fs';
 import { promises as fsp } from 'fs';
 import * as path from 'path';
@@ -28,12 +29,14 @@ import { buildReportDocx, parseReportText } from './report-docx';
 import { SettingsService } from '../settings/settings.service';
 import { scanDicomInstances, sampleDir } from '../local/local.service';
 import { dataDir } from '../store/json-store';
+import { WordSyncService } from './word-sync.service';
 
 @Controller('api/cases')
 export class CasesController {
   constructor(
     private readonly cases: CasesService,
     private readonly settings: SettingsService,
+    private readonly wordSync: WordSyncService,
   ) {}
 
   @Get()
@@ -153,7 +156,53 @@ export class CasesController {
       'Content-Disposition',
       `attachment; filename="${c.caseNumber}-report.docx"`,
     );
+    res.setHeader('DAV', '1, 2');
+    res.setHeader('MS-Author-Via', 'DAV');
     res.send(buf);
+  }
+
+  /** Direct WebDAV PUT or binary upload of docx (e.g. from Word or sync agents) */
+  @Put(':id/report.docx')
+  async reportDocxPut(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', async () => {
+      try {
+        const buffer = Buffer.concat(chunks);
+        if (!buffer.length) {
+          res.status(400).send('Empty document');
+          return;
+        }
+        const { value: text } = await mammoth.extractRawText({ buffer });
+        const parsed = parseReportText(text);
+        const c = await this.cases.saveReport(id, parsed, 'save');
+        if (!c) {
+          res.status(404).send('Case not found');
+          return;
+        }
+        res.setHeader('DAV', '1, 2');
+        res.setHeader('MS-Author-Via', 'DAV');
+        res.status(200).json(c);
+      } catch (err: any) {
+        res.status(500).send(err.message);
+      }
+    });
+  }
+
+  /** Open Microsoft Word on the workstation with report pre-filled, and start live auto-sync */
+  @Post(':id/word/open')
+  async openInWord(@Param('id') id: string) {
+    return this.wordSync.openInWord(id);
+  }
+
+  /** Check if a Word editing session is actively open and synced */
+  @Get(':id/word/status')
+  getWordStatus(@Param('id') id: string) {
+    return this.wordSync.getSessionStatus(id);
   }
 
   /** Re-import a doctor-edited .docx: pulls the section text back out and

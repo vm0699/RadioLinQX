@@ -9,6 +9,7 @@ import { ReferringDoctorsController } from './directory/referring-doctors.contro
 import { ReferringDoctorsService } from './directory/referring-doctors.service';
 import { CasesController } from './cases/cases.controller';
 import { CasesService } from './cases/cases.service';
+import { WordSyncService } from './cases/word-sync.service';
 import { NotificationsController } from './notifications/notifications.controller';
 import { NotificationsService } from './notifications/notifications.service';
 import { ChatController } from './chat/chat.controller';
@@ -33,6 +34,7 @@ import { UploadService } from './upload/upload.service';
     SettingsService,
     ReferringDoctorsService,
     CasesService,
+    WordSyncService,
     NotificationsService,
     ChatService,
     UploadService,
