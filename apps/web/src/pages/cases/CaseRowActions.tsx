@@ -143,15 +143,31 @@ export function CaseRowActions({
           onClick: async ({ key }) => {
             if (key === 'word') {
               try {
-                const docxUrl = api.caseReportDocxUrl(c.id);
-                const absoluteUrl = docxUrl.startsWith('http')
-                  ? docxUrl
-                  : `${window.location.origin}${docxUrl}`;
+                let agentRunning = false;
+                try {
+                  const probe = await fetch('http://127.0.0.1:4820/health', { signal: AbortSignal.timeout(1500) });
+                  agentRunning = probe.ok;
+                } catch {
+                  agentRunning = false;
+                }
 
-                window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
-                api.openInWord(c.id).catch(() => {});
+                if (!agentRunning) {
+                  message.error({
+                    content: (
+                      <span>
+                        <b>Word Sync Agent is not running.</b><br />
+                        Double-click <b>start-word-sync.bat</b> in the project folder, then try again.
+                      </span>
+                    ),
+                    duration: 8,
+                  });
+                  return;
+                }
+
+                const resp = await fetch(`http://127.0.0.1:4820/open/${c.id}`);
+                if (!resp.ok) throw new Error('Agent returned ' + resp.status);
                 onOpenDrawer(c.id);
-                message.info(`Opening Word for ${c.caseNumber}.`);
+                message.success(`Opening Word for ${c.caseNumber}. Press Ctrl+S in Word to auto-save!`);
               } catch (err: any) {
                 message.error(`Failed to launch Word: ${err.message || err}`);
               }
