@@ -13,6 +13,13 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 
+process.on('uncaughtException', (err) => {
+  console.error('[Word Agent] Uncaught exception:', err.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Word Agent] Unhandled rejection:', reason);
+});
+
 let mammoth;
 try {
   mammoth = require(path.resolve(__dirname, '../apps/api/node_modules/mammoth'));
@@ -20,14 +27,16 @@ try {
   try {
     mammoth = require('mammoth');
   } catch (e2) {
-    console.error('mammoth package not found. Please run npm install in apps/api');
+    console.error('mammoth package not found.');
   }
 }
 
 const PORT = 4820;
 const WORK_DIR = path.join(os.tmpdir(), 'RadioLinQ-Reports');
 if (!fs.existsSync(WORK_DIR)) {
-  fs.mkdirSync(WORK_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(WORK_DIR, { recursive: true });
+  } catch (e) {}
 }
 
 // Active editing sessions
@@ -69,26 +78,64 @@ function parseReportText(raw) {
 
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
+    let resolved = false;
     const client = url.startsWith('https') ? https : http;
     const file = fs.createWriteStream(destPath);
+
+    file.on('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        reject(err);
+      }
+    });
+
     client
       .get(url, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          file.close();
           return downloadFile(res.headers.location, destPath).then(resolve).catch(reject);
         }
         if (res.statusCode !== 200) {
-          return reject(new Error(`Failed to download: status ${res.statusCode}`));
+          file.close();
+          if (!resolved) {
+            resolved = true;
+            reject(new Error(`Failed to download: status ${res.statusCode}`));
+          }
+          return;
         }
         res.pipe(file);
         file.on('finish', () => {
-          file.close(() => resolve(destPath));
+          file.close(() => {
+            if (!resolved) {
+              resolved = true;
+              resolve(destPath);
+            }
+          });
         });
       })
       .on('error', (err) => {
-        fs.unlink(destPath, () => {});
-        reject(err);
+        try { file.close(); } catch (e) {}
+        try { fs.unlink(destPath, () => {}); } catch (e) {}
+        if (!resolved) {
+          resolved = true;
+          reject(err);
+        }
       });
   });
+}
+
+async function readFileWithRetry(filePath, retries = 6, delayMs = 250) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return fs.readFileSync(filePath);
+    } catch (err) {
+      if ((err.code === 'EBUSY' || err.code === 'EPERM') && i < retries - 1) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 function sendPatch(apiBase, caseId, reportData) {
@@ -150,7 +197,7 @@ function launchWord(filePath) {
 
 function watchFileForSync(session) {
   if (session.watcher) {
-    fs.unwatchFile(session.filePath);
+    try { fs.unwatchFile(session.filePath); } catch (e) {}
   }
 
   let debounceTimer = null;
@@ -163,9 +210,9 @@ function watchFileForSync(session) {
         if (curStat.mtimeMs <= session.lastMtime) return;
         session.lastMtime = curStat.mtimeMs;
 
-        console.log(`[Word Agent] File modified detected for case ${session.caseNumber}. Reading updated Word doc...`);
-        const buffer = fs.readFileSync(session.filePath);
-        if (!buffer.length) return;
+        console.log(`[Word Agent] Save detected for case ${session.caseNumber}. Reading updated Word document...`);
+        const buffer = await readFileWithRetry(session.filePath);
+        if (!buffer || !buffer.length) return;
 
         let rawText = '';
         if (mammoth) {
@@ -177,7 +224,7 @@ function watchFileForSync(session) {
         session.lastReport = parsedReport;
         session.lastSyncedAt = new Date().toISOString();
 
-        console.log(`[Word Agent] Auto-syncing to ${session.apiBase}...`);
+        console.log(`[Word Agent] Auto-syncing updated sections to ${session.apiBase}...`);
         await sendPatch(session.apiBase, session.caseId, parsedReport);
         console.log(`[Word Agent] SUCCESS! Report for ${session.caseNumber} synced automatically to server!`);
       } catch (err) {
@@ -256,12 +303,37 @@ const server = http.createServer(async (req, res) => {
         const fileName = `${safeCaseNo}-report.docx`;
         const filePath = path.join(WORK_DIR, fileName);
 
-        console.log(`[Word Agent] Downloading report template for ${caseNumber}...`);
-        await downloadFile(docxUrl, filePath);
-        console.log(`[Word Agent] Report saved locally to ${filePath}`);
+        // Check if file is already open / downloaded
+        let downloadNeeded = true;
+        if (fs.existsSync(filePath)) {
+          // If file is locked by Word, don't re-download, just re-focus Word
+          try {
+            const testHandle = fs.openSync(filePath, 'r+');
+            fs.closeSync(testHandle);
+          } catch (lockErr) {
+            if (lockErr.code === 'EBUSY' || lockErr.code === 'EPERM') {
+              console.log(`[Word Agent] Document ${fileName} is already open in Word.`);
+              downloadNeeded = false;
+            }
+          }
+        }
 
-        const stat = fs.statSync(filePath);
-        const session = {
+        if (downloadNeeded) {
+          console.log(`[Word Agent] Downloading report template for ${caseNumber}...`);
+          try {
+            await downloadFile(docxUrl, filePath);
+            console.log(`[Word Agent] Report saved locally to ${filePath}`);
+          } catch (dlErr) {
+            if (dlErr.code === 'EBUSY' || dlErr.code === 'EPERM') {
+              console.log(`[Word Agent] File is busy/locked by Word, keeping existing file: ${filePath}`);
+            } else {
+              throw dlErr;
+            }
+          }
+        }
+
+        const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : { mtimeMs: Date.now() };
+        const session = sessions.get(caseId) || {
           caseId,
           caseNumber: caseNumber || caseId,
           filePath,
