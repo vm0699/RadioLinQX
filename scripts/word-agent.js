@@ -1,51 +1,43 @@
-/**
- * RadioLinQ Word Sync Agent - Local WebDAV Proxy
+﻿/**
+ * RadioLinQ Word Sync Agent
  *
- * How it works:
- *   1. Frontend fires: ms-word:ofe|u|http://127.0.0.1:4820/report/CASE_ID
- *   2. Word does OPTIONS -> GET -> LOCK -> (user edits) -> PUT -> UNLOCK to localhost:4820
- *   3. This agent proxies GET from the real API and PUT back to the real API import endpoint.
- *   4. Ctrl+S in Word saves directly to RadioLinQ with NO Save As dialog.
- *
- * Run this ONCE before clicking "Open in Word":
- *   node scripts/word-agent.js
- *   (or double-click start-word-sync.bat)
+ * Flow:
+ *   Browser calls GET http://127.0.0.1:4820/open/CASE_ID
+ *   Agent downloads the docx from the API to a local temp file
+ *   Agent opens Word with that local file  (cmd /c start "" "path\to\report.docx")
+ *   Agent watches the file for changes (fs.watch + debounce)
+ *   When you press Ctrl+S in Word, it saves locally (NO Save As dialog)
+ *   Agent detects the save and auto-uploads to radiolinq-api.onrender.com
  */
 
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { exec } = require('child_process');
 const { URL } = require('url');
 
 const PORT = 4820;
 const API_BASE = 'https://radiolinq-api.onrender.com';
+const TEMP_DIR = path.join(os.tmpdir(), 'RadioLinQ-Reports');
 
-// Map caseId -> lock token
-const locks = new Map();
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-function genToken() {
-  return 'urn:uuid:' + Math.random().toString(36).slice(2) + '-' + Date.now();
-}
+// caseId -> { watcher, debounce, localPath }
+const sessions = new Map();
+
+// ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 function fetchBuffer(url) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const lib = parsed.protocol === 'https:' ? https : http;
-    const req = lib.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-        path: parsed.pathname + parsed.search,
-        method: 'GET',
-        headers: { 'User-Agent': 'RadioLinQ-WordAgent/1.0' }
-      },
-      (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
-      }
-    );
-    req.on('error', reject);
-    req.end();
+    lib.get(url, { headers: { 'User-Agent': 'RadioLinQ-Agent/2.0' } }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    }).on('error', reject);
   });
 }
 
@@ -53,53 +45,115 @@ function postMultipart(url, filename, buf) {
   return new Promise((resolve, reject) => {
     const boundary = '----RadioLinQBoundary' + Date.now();
     const header = Buffer.from(
-      '--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="' + filename + '"\r\nContent-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n'
+      '--' + boundary + '\r\n' +
+      'Content-Disposition: form-data; name="file"; filename="' + filename + '"\r\n' +
+      'Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n'
     );
     const footer = Buffer.from('\r\n--' + boundary + '--\r\n');
     const body = Buffer.concat([header, buf, footer]);
-
     const parsed = new URL(url);
     const lib = parsed.protocol === 'https:' ? https : http;
-    const req = lib.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-        path: parsed.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'multipart/form-data; boundary=' + boundary,
-          'Content-Length': body.length,
-          'User-Agent': 'RadioLinQ-WordAgent/1.0',
-        }
-      },
-      (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          const text = Buffer.concat(chunks).toString();
-          console.log('[agent] import -> ' + res.statusCode + ' ' + text.slice(0, 120));
-          resolve({ status: res.statusCode, body: text });
-        });
+    const req = lib.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+        'Content-Length': body.length,
+        'User-Agent': 'RadioLinQ-Agent/2.0',
       }
-    );
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
     req.on('error', reject);
     req.write(body);
     req.end();
   });
 }
 
-function readBody(req) {
-  return new Promise((resolve) => {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+// ── Watch + upload ────────────────────────────────────────────────────────────
+
+function startWatching(caseId, localPath) {
+  // Stop any existing watcher for this case
+  stopWatching(caseId);
+
+  let debounce = null;
+  const watcher = fs.watch(localPath, () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(async () => {
+      // Wait a bit more to ensure Word has finished writing
+      await new Promise(r => setTimeout(r, 800));
+      try {
+        const buf = fs.readFileSync(localPath);
+        if (buf.length < 1000) return; // skip tiny/temp files Word writes during save
+        console.log('[agent] File changed (' + buf.length + ' bytes) - uploading to API...');
+        const { status } = await postMultipart(
+          API_BASE + '/api/cases/' + caseId + '/report/import',
+          'report-' + caseId + '.docx',
+          buf
+        );
+        if (status >= 200 && status < 300) {
+          console.log('[agent] Saved case ' + caseId + ' successfully!');
+        } else {
+          console.error('[agent] API returned ' + status);
+        }
+      } catch (err) {
+        console.error('[agent] Upload error:', err.message);
+      }
+    }, 600);
   });
+
+  sessions.set(caseId, { watcher, localPath });
+  console.log('[agent] Watching ' + localPath);
 }
 
-function parseCaseId(pathname) {
-  const m = pathname.match(/^\/report\/([^/]+)/);
-  return m ? m[1] : null;
+function stopWatching(caseId) {
+  const s = sessions.get(caseId);
+  if (s) {
+    try { s.watcher.close(); } catch {}
+    sessions.delete(caseId);
+  }
 }
+
+// ── Open/download handler ─────────────────────────────────────────────────────
+
+async function handleOpen(caseId, res) {
+  console.log('[agent] Opening case ' + caseId + ' in Word...');
+  try {
+    // Download the docx from the real API
+    const { status, body } = await fetchBuffer(API_BASE + '/api/cases/' + caseId + '/report.docx');
+    if (status !== 200) {
+      res.writeHead(502);
+      return res.end('API returned ' + status);
+    }
+
+    // Write to a temp file
+    const localPath = path.join(TEMP_DIR, 'report-' + caseId + '.docx');
+    fs.writeFileSync(localPath, body);
+    console.log('[agent] Saved to ' + localPath);
+
+    // Open with Word (uses system default for .docx)
+    exec('cmd /c start "" "' + localPath + '"', (err) => {
+      if (err) console.error('[agent] Failed to open Word:', err.message);
+      else console.log('[agent] Word opened!');
+    });
+
+    // Start watching for Ctrl+S saves
+    startWatching(caseId, localPath);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, localPath, message: 'Word opened. Ctrl+S inside Word will auto-save to RadioLinQ.' }));
+  } catch (err) {
+    console.error('[agent] Open error:', err.message);
+    res.writeHead(500);
+    res.end(err.message);
+  }
+}
+
+// ── HTTP Server ───────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
   const method = req.method.toUpperCase();
@@ -108,117 +162,51 @@ const server = http.createServer(async (req, res) => {
   console.log('[agent] ' + method + ' ' + pathname);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,POST,OPTIONS,LOCK,UNLOCK,PROPFIND,HEAD');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Depth,Timeout,Lock-Token,If');
-  res.setHeader('DAV', '1,2');
-  res.setHeader('MS-Author-Via', 'DAV');
-
-  if (pathname === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true }));
-  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (method === 'OPTIONS') {
-    res.setHeader('Allow', 'GET,HEAD,PUT,OPTIONS,LOCK,UNLOCK,PROPFIND');
-    res.writeHead(200);
-    return res.end();
-  }
-
-  const caseId = parseCaseId(pathname);
-  if (!caseId) {
-    res.writeHead(404);
-    return res.end('Not found');
-  }
-
-  // HEAD / GET - serve the docx from the real API
-  if (method === 'HEAD' || method === 'GET') {
-    try {
-      const { status, body } = await fetchBuffer(API_BASE + '/api/cases/' + caseId + '/report.docx');
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      res.setHeader('Content-Length', body.length);
-      res.setHeader('Content-Disposition', 'inline; filename="report-' + caseId + '.docx"');
-      res.setHeader('ETag', '"' + caseId + '-' + Date.now() + '"');
-      res.setHeader('Last-Modified', new Date().toUTCString());
-      res.setHeader('Cache-Control', 'no-cache, no-store');
-      res.writeHead(status === 200 ? 200 : status);
-      return res.end(method === 'HEAD' ? undefined : body);
-    } catch (err) {
-      console.error('[agent] GET error', err.message);
-      res.writeHead(502);
-      return res.end('Bad gateway');
-    }
-  }
-
-  // PROPFIND - minimal WebDAV response
-  if (method === 'PROPFIND') {
-    const xml = '<?xml version="1.0" encoding="utf-8"?>\n<D:multistatus xmlns:D="DAV:">\n  <D:response>\n    <D:href>http://127.0.0.1:' + PORT + pathname + '</D:href>\n    <D:propstat>\n      <D:prop>\n        <D:resourcetype/>\n        <D:getcontenttype>application/vnd.openxmlformats-officedocument.wordprocessingml.document</D:getcontenttype>\n        <D:getlastmodified>' + new Date().toUTCString() + '</D:getlastmodified>\n        <D:supportedlock>\n          <D:lockentry>\n            <D:lockscope><D:exclusive/></D:lockscope>\n            <D:locktype><D:write/></D:locktype>\n          </D:lockentry>\n        </D:supportedlock>\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>\n  </D:response>\n</D:multistatus>';
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.writeHead(207);
-    return res.end(xml);
-  }
-
-  // LOCK - return a fake lock token so Word proceeds
-  if (method === 'LOCK') {
-    const token = locks.get(caseId) || genToken();
-    locks.set(caseId, token);
-    const xml = '<?xml version="1.0" encoding="utf-8"?>\n<D:prop xmlns:D="DAV:">\n  <D:lockdiscovery>\n    <D:activelock>\n      <D:locktype><D:write/></D:locktype>\n      <D:lockscope><D:exclusive/></D:lockscope>\n      <D:depth>0</D:depth>\n      <D:timeout>Second-3600</D:timeout>\n      <D:locktoken><D:href>' + token + '</D:href></D:locktoken>\n      <D:lockroot><D:href>http://127.0.0.1:' + PORT + pathname + '</D:href></D:lockroot>\n    </D:activelock>\n  </D:lockdiscovery>\n</D:prop>';
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.setHeader('Lock-Token', '<' + token + '>');
-    res.writeHead(200);
-    return res.end(xml);
-  }
-
-  // UNLOCK - clear lock
-  if (method === 'UNLOCK') {
-    locks.delete(caseId);
     res.writeHead(204);
     return res.end();
   }
 
-  // PUT - Word is saving; forward to the RadioLinQ import endpoint
-  if (method === 'PUT') {
-    try {
-      const buf = await readBody(req);
-      console.log('[agent] PUT ' + caseId + ' - received ' + buf.length + ' bytes, uploading to API...');
-      const { status } = await postMultipart(
-        API_BASE + '/api/cases/' + caseId + '/report/import',
-        'report-' + caseId + '.docx',
-        buf
-      );
-      if (status >= 200 && status < 300) {
-        console.log('[agent] Saved case ' + caseId + ' successfully');
-        res.writeHead(204);
-      } else {
-        console.error('[agent] API returned ' + status);
-        res.writeHead(502);
-      }
-    } catch (err) {
-      console.error('[agent] PUT error', err.message);
-      res.writeHead(500);
-    }
-    return res.end();
+  if (pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, sessions: sessions.size }));
   }
 
-  res.writeHead(405);
-  res.end('Method not allowed');
+  const openMatch = pathname.match(/^\/open\/([^/]+)$/);
+  if (openMatch && method === 'GET') {
+    return handleOpen(openMatch[1], res);
+  }
+
+  const stopMatch = pathname.match(/^\/stop\/([^/]+)$/);
+  if (stopMatch && method === 'GET') {
+    stopWatching(stopMatch[1]);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
+  res.writeHead(404);
+  res.end('Not found');
 });
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log('');
-  console.log('+------------------------------------------------------+');
-  console.log('�   RadioLinQ Word Sync Agent  *  localhost:' + PORT + '       �');
-  console.log('�------------------------------------------------------�');
-  console.log('�  1. Click "Open in Word" in the web app              �');
-  console.log('�  2. Edit the report in Word                          �');
-  console.log('�  3. Press Ctrl+S -> saves directly to RadioLinQ!     �');
-  console.log('�     No "Save As" dialog. No extra steps.             �');
-  console.log('+------------------------------------------------------+');
+  console.log('+======================================================+');
+  console.log('|   RadioLinQ Word Sync Agent  *  localhost:' + PORT + '       |');
+  console.log('+======================================================+');
+  console.log('|  Keep this window OPEN while using Word.             |');
+  console.log('|  Click "Open in Word" in the site.                   |');
+  console.log('|  Press Ctrl+S in Word -> auto-saves to RadioLinQ!    |');
+  console.log('|  No "Save As" dialog. No extra steps.                |');
+  console.log('+======================================================+');
   console.log('');
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.log('[agent] Port ' + PORT + ' already in use - agent may already be running.');
+    console.log('[agent] Port ' + PORT + ' already in use - kill it and retry.');
   } else {
     console.error('[agent] Server error:', err.message);
   }

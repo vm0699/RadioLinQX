@@ -133,8 +133,7 @@ export function CaseDrawer({
     if (!c) return;
     setOpeningWord(true);
     try {
-      // Check if the local WebDAV agent is running on port 4820
-      const agentUrl = `http://127.0.0.1:4820/report/${c.id}`;
+      // Check if the local sync agent is running on port 4820
       let agentRunning = false;
       try {
         const probe = await fetch('http://127.0.0.1:4820/health', { signal: AbortSignal.timeout(1500) });
@@ -150,22 +149,29 @@ export function CaseDrawer({
               <b>Word Sync Agent is not running.</b><br />
               Double-click <b>start-word-sync.bat</b> in the project folder, then try again.<br />
               <span style={{ color: '#888', fontSize: 12 }}>
-                (This lets Ctrl+S in Word save directly to RadioLinQ — no Save As dialog)
+                (Lets Ctrl+S in Word save directly to RadioLinQ — no Save As dialog)
               </span>
             </span>
           ),
           duration: 8,
         });
-        setOpeningWord(false);
         return;
       }
 
-      // Agent is running — open via local WebDAV proxy so Ctrl+S saves directly
-      window.location.href = `ms-word:ofe|u|${agentUrl}`;
+      // Ask agent to download docx locally and open Word with local file path
+      const resp = await fetch(`http://127.0.0.1:4820/open/${c.id}`);
+      if (!resp.ok) throw new Error('Agent returned ' + resp.status);
       setWordSessionActive(true);
-      message.success('Word is opening. Press Ctrl+S inside Word to save directly to RadioLinQ — no Save As dialog!');
+      message.success({
+        content: (
+          <span>
+            <b>Word is opening!</b> Press <b>Ctrl+S</b> inside Word to save directly to RadioLinQ — no Save As dialog.
+          </span>
+        ),
+        duration: 6,
+      });
     } catch (e: any) {
-      message.error(`Failed to launch Word: ${e.message || e}`);
+      message.error(`Failed to open Word: ${e.message || e}`);
     } finally {
       setOpeningWord(false);
     }
