@@ -140,10 +140,12 @@ async function handleOpen(caseId, res) {
     await new Promise(r => setTimeout(r, 800)); // wait for Word to close
 
     fs.writeFileSync(localPath, body);
-    // Unblock the file — removes the "downloaded from internet" Zone.Identifier tag
-    // Without this, Word opens in Protected View (read-only) and Ctrl+S shows Save As
+    // Remove read-only attribute (otherwise Word opens it as read-only and Ctrl+S shows Save As)
+    try { fs.chmodSync(localPath, 0o666); } catch {}
+    await new Promise(r => exec('attrib -r "' + localPath + '"', r));
+    // Remove "downloaded from internet" Zone.Identifier tag (prevents Protected View)
     await new Promise(r => exec('powershell -command "Unblock-File -Path \'' + localPath + '\'"', r));
-    console.log('[agent] Saved + unblocked: ' + localPath);
+    console.log('[agent] Saved, unblocked, writable: ' + localPath);
 
     // Open with Word explicitly — more reliable than cmd /c start for .docx files
     const wordPaths = [
