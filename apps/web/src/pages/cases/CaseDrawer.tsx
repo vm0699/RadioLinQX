@@ -44,7 +44,7 @@ export function CaseDrawer({
   const [openingWord, setOpeningWord] = useState(false);
   const [wordSessionActive, setWordSessionActive] = useState(false);
   const [lastWordSyncAt, setLastWordSyncAt] = useState<string | null>(null);
-  const lastKnownSyncRef = useRef<string | null>(null);
+  const saveReportRef = useRef<((action: 'save' | 'sign') => void) | null>(null);
   const attInput = useRef<HTMLInputElement>(null);
   const reportFileInput = useRef<HTMLInputElement>(null);
 
@@ -53,7 +53,6 @@ export function CaseDrawer({
       setC(null);
       setWordSessionActive(false);
       setLastWordSyncAt(null);
-      lastKnownSyncRef.current = null;
       return;
     }
     setLoading(true);
@@ -68,55 +67,22 @@ export function CaseDrawer({
       .finally(() => setLoading(false));
   }, [caseId, message]);
 
+  // Keep a ref to the latest saveReport so Ctrl+S handler never captures stale closures
+  useEffect(() => {
+    saveReportRef.current = saveReport;
+  });
+
   // 1-Click Keyboard Shortcut: Ctrl+S / Cmd+S saves report draft immediately
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (c && c.status !== 'REPORTED' && !saving) {
-          saveReport('save');
-        }
+        saveReportRef.current?.('save');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [c, report, saving]);
-
-  // Live background poll and focus listener for Word auto-sync
-  useEffect(() => {
-    if (!caseId) return;
-
-    let timer: any = null;
-
-    const checkSync = async () => {
-      try {
-        const st = await api.getWordStatus(caseId);
-        if (st?.active) {
-          setWordSessionActive(true);
-        }
-        if (st?.lastSavedAt && st.lastSavedAt !== lastKnownSyncRef.current) {
-          lastKnownSyncRef.current = st.lastSavedAt;
-          setLastWordSyncAt(st.lastSavedAt);
-          const updated = await api.getCase(caseId);
-          setC(updated);
-          setReport(updated.report ?? BLANK);
-          onChanged();
-          message.success(`Report auto-synced from Word (${dayjs(st.lastSavedAt).format('HH:mm:ss')})`);
-        }
-      } catch {}
-    };
-
-    timer = setInterval(checkSync, 3000);
-    const onFocus = () => {
-      checkSync();
-    };
-    window.addEventListener('focus', onFocus);
-
-    return () => {
-      if (timer) clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [caseId, onChanged, message]);
+  }, []);
 
   const refresh = async () => {
     if (!caseId) return;
@@ -163,7 +129,7 @@ export function CaseDrawer({
     }
   };
 
-  const openInWord = async () => {
+  const openInWord = () => {
     if (!c) return;
     setOpeningWord(true);
     try {
@@ -171,11 +137,9 @@ export function CaseDrawer({
       const absoluteUrl = docxUrl.startsWith('http')
         ? docxUrl
         : `${window.location.origin}${docxUrl}`;
-
       window.location.href = `ms-word:ofe|u|${absoluteUrl}`;
-      api.openInWord(c.id).catch(() => {});
       setWordSessionActive(true);
-      message.info('Opening Microsoft Word. When done, click "1-Click Import Word" or drop your saved docx below to save in 1 click.');
+      message.info('Opening Microsoft Word. Once edited, drop the saved .docx file below to upload in 1 click.');
     } catch (e: any) {
       message.error(`Failed to launch Word: ${e.message || e}`);
     } finally {
