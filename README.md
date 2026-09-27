@@ -1,9 +1,8 @@
-# RadioLinQ Clone
+# RadBridge
 
-A recreation of the RadioLinQ teleradiology platform: a **Cornerstone3D** DICOM
-viewer (GPU/WebGL volume rendering via vtk.js) plus the **case-management
-dashboard** around it — cases, reporting workflow, referring doctors, settings,
-notifications.
+A teleradiology platform: a **Cornerstone3D** DICOM viewer (GPU/WebGL volume
+rendering via vtk.js) plus the **case-management dashboard** around it —
+cases, reporting workflow, referring doctors, settings, notifications.
 
 **→ How to start & test everything: [`docs/RUNNING.md`](docs/RUNNING.md)**
 (local mode needs no Docker.)

@@ -147,7 +147,7 @@ export function CaseDrawer({
         const resp = await fetch(`http://127.0.0.1:4820/open/${c.id}`);
         if (resp.ok) {
           setWordSessionActive(true);
-          message.success('Word is opening! Press Ctrl+S inside Word to auto-save to RadioLinQ.');
+          message.success('Word is opening! Press Ctrl+S inside Word to auto-save to RadBridge.');
           return;
         }
       }

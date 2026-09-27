@@ -15,7 +15,7 @@ const cine = (csTools.utilities as any).cine as {
   stopClip: (el: HTMLElement) => void;
 };
 
-export const ENGINE_ID = 'RADIOLINQ_ENGINE';
+export const ENGINE_ID = 'RADBRIDGE_ENGINE';
 export const MPR_VIEWPORTS = ['MPR_AXIAL', 'MPR_SAGITTAL', 'MPR_CORONAL'] as const;
 
 const ORIENTATION: Record<(typeof MPR_VIEWPORTS)[number], unknown> = {

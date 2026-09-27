@@ -143,7 +143,7 @@ export function ViewerPage() {
       <ConfigProvider theme={DARK}>
         <div className="viewer-shell">
           <div className="viewer-topbar">
-            <span className="brand"><span className="brand-dot" />radiolinq</span>
+            <span className="brand"><span className="brand-dot" />RadBridge</span>
             <Button size="small" onClick={() => navigate('/')}>
               Back to studies
             </Button>
@@ -158,7 +158,7 @@ export function ViewerPage() {
    <ConfigProvider theme={DARK}>
     <div className="viewer-shell">
       <div className="viewer-topbar">
-        <span className="brand"><span className="brand-dot" />radiolinq</span>
+        <span className="brand"><span className="brand-dot" />RadBridge</span>
         <Tooltip title="Reload series">
           <Button
             size="small"

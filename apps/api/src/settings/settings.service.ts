@@ -40,7 +40,7 @@ const DEFAULTS: AppSettings = {
   id: 'app',
   scanCenter: {
     name: 'Sunray Scans',
-    aet: 'RADIOLINQ',
+    aet: 'RADBRIDGE',
     contactEmail: 'ops@sunrayscans.example',
     contactPhone: '+91 90000 00000',
   },
@@ -64,11 +64,11 @@ const DEFAULTS: AppSettings = {
     'Interesting case', 'Follow-up', 'Comparison available', 'Poor quality',
   ],
   radiologists: [
-    { id: 'rad-1', name: 'Dr. Anitha Rao', email: 'anitha.rao@radiolinq.example', specialties: ['CT', 'MR', 'Neuro'], active: true },
-    { id: 'rad-2', name: 'Dr. Vikram Shetty', email: 'vikram.shetty@radiolinq.example', specialties: ['CR', 'DX', 'MSK'], active: true },
-    { id: 'rad-3', name: 'Dr. Meera Iyer', email: 'meera.iyer@radiolinq.example', specialties: ['US', 'MG', 'Body'], active: true },
-    { id: 'rad-4', name: 'Dr. Sanjay Kulkarni', email: 'sanjay.k@radiolinq.example', specialties: ['CT', 'Chest'], active: true },
-    { id: 'rad-5', name: 'Dr. Priya Nair', email: 'priya.nair@radiolinq.example', specialties: ['MR', 'Neuro', 'Spine'], active: false },
+    { id: 'rad-1', name: 'Dr. Anitha Rao', email: 'anitha.rao@radbridge.example', specialties: ['CT', 'MR', 'Neuro'], active: true },
+    { id: 'rad-2', name: 'Dr. Vikram Shetty', email: 'vikram.shetty@radbridge.example', specialties: ['CR', 'DX', 'MSK'], active: true },
+    { id: 'rad-3', name: 'Dr. Meera Iyer', email: 'meera.iyer@radbridge.example', specialties: ['US', 'MG', 'Body'], active: true },
+    { id: 'rad-4', name: 'Dr. Sanjay Kulkarni', email: 'sanjay.k@radbridge.example', specialties: ['CT', 'Chest'], active: true },
+    { id: 'rad-5', name: 'Dr. Priya Nair', email: 'priya.nair@radbridge.example', specialties: ['MR', 'Neuro', 'Spine'], active: false },
   ],
   tat: {
     targetHoursByScanType: { '*': 24, CT: 12, MR: 24, CR: 6, DX: 6, US: 8, XA: 4 },

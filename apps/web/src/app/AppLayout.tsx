@@ -42,7 +42,7 @@ export function AppLayout() {
       <header className="topbar">
         <div className="brand" onClick={() => nav('/')}>
           <span className="brand-dot" />
-          radiolinq
+          RadBridge
         </div>
         <nav className="topnav">
           {NAV.map((n) => (

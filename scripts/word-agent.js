@@ -1,5 +1,5 @@
 /**
- * RadioLinQ Word Sync Agent
+ * RadBridge Word Sync Agent
  *
  * Flow:
  *   Browser calls GET http://127.0.0.1:4820/open/CASE_ID
@@ -22,7 +22,7 @@ const PORT = 4820;
 const API_BASE = 'https://radiolinq-api.onrender.com';
 
 // Use Documents folder — NOT system temp (AppData\Local\Temp causes Save As dialog in Word)
-const WORK_DIR = path.join(os.homedir(), 'Documents', 'RadioLinQ-Reports');
+const WORK_DIR = path.join(os.homedir(), 'Documents', 'RadBridge-Reports');
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
 // caseId -> { watcher, debounce, localPath }
@@ -34,7 +34,7 @@ function fetchBuffer(url) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const lib = parsed.protocol === 'https:' ? https : http;
-    lib.get(url, { headers: { 'User-Agent': 'RadioLinQ-Agent/2.0' } }, (res) => {
+    lib.get(url, { headers: { 'User-Agent': 'RadBridge-Agent/2.0' } }, (res) => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
@@ -44,7 +44,7 @@ function fetchBuffer(url) {
 
 function postMultipart(url, filename, buf) {
   return new Promise((resolve, reject) => {
-    const boundary = '----RadioLinQBoundary' + Date.now();
+    const boundary = '----RadBridgeBoundary' + Date.now();
     const header = Buffer.from(
       '--' + boundary + '\r\n' +
       'Content-Disposition: form-data; name="file"; filename="' + filename + '"\r\n' +
@@ -62,7 +62,7 @@ function postMultipart(url, filename, buf) {
       headers: {
         'Content-Type': 'multipart/form-data; boundary=' + boundary,
         'Content-Length': body.length,
-        'User-Agent': 'RadioLinQ-Agent/2.0',
+        'User-Agent': 'RadBridge-Agent/2.0',
       }
     }, (res) => {
       const chunks = [];
@@ -111,7 +111,7 @@ function startWatching(caseId, localPath) {
         const buf = await readFileWithRetry(localPath);
         if (buf.length < 1000) return; // ignore temp/partial files
 
-        console.log('[agent] File saved by Word (' + buf.length + ' bytes) — uploading to RadioLinQ...');
+        console.log('[agent] File saved by Word (' + buf.length + ' bytes) — uploading to RadBridge...');
         const { status, body } = await postMultipart(
           API_BASE + '/api/cases/' + caseId + '/report/import',
           'report-' + caseId + '.docx',
@@ -209,7 +209,7 @@ async function handleOpen(caseId, res) {
     res.end(JSON.stringify({
       ok: true,
       localPath,
-      message: 'Word opened. Ctrl+S inside Word auto-saves to RadioLinQ — no Save As dialog.',
+      message: 'Word opened. Ctrl+S inside Word auto-saves to RadBridge — no Save As dialog.',
     }));
   } catch (err) {
     console.error('[agent] Open error:', err.message);
@@ -259,11 +259,11 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log('');
   console.log('+======================================================+');
-  console.log('|   RadioLinQ Word Sync Agent  *  localhost:' + PORT + '       |');
+  console.log('|   RadBridge Word Sync Agent  *  localhost:' + PORT + '       |');
   console.log('+======================================================+');
   console.log('|  Keep this window OPEN while using Word.             |');
   console.log('|  Click "Open in Word" in the site.                   |');
-  console.log('|  Press Ctrl+S in Word -> auto-saves to RadioLinQ!    |');
+  console.log('|  Press Ctrl+S in Word -> auto-saves to RadBridge!    |');
   console.log('|  No "Save As" dialog. No extra steps.                |');
   console.log('+======================================================+');
   console.log('');

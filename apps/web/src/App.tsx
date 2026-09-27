@@ -21,7 +21,7 @@ function RouteErrorFallback() {
     >
       <Result
         status="warning"
-        title="RadioLinQ could not load"
+        title="RadBridge could not load"
         subTitle={
           err?.message ||
           (typeof err === 'string'

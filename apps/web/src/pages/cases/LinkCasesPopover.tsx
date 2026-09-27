@@ -3,7 +3,7 @@ import { Select, Tag, Empty, Spin } from 'antd';
 import { api, type CaseView } from '../../api/client';
 
 /**
- * Link this case to prior / related studies (comparison). Mirrors RadioLinQ's
+ * Link this case to prior / related studies (comparison). Mirrors RadBridge's
  * "Link related cases" row action.
  */
 export function LinkCasesPopover({

@@ -22,7 +22,7 @@ export interface WordSession {
 export class WordSyncService {
   private readonly log = new Logger(WordSyncService.name);
   private sessions = new Map<string, WordSession>();
-  private readonly workDir = path.join(os.tmpdir(), 'RadioLinQ-Reports');
+  private readonly workDir = path.join(os.tmpdir(), 'RadBridge-Reports');
 
   constructor(
     private readonly cases: CasesService,

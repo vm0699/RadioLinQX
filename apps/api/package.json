@@ -1,8 +1,8 @@
 {
-  "name": "@radiolinq/api",
+  "name": "@radbridge/api",
   "version": "0.1.0",
   "private": true,
-  "description": "Thin DICOMweb proxy + app API for the RadioLinQ clone",
+  "description": "Thin DICOMweb proxy + app API for RadBridge",
   "scripts": {
     "build": "nest build",
     "start": "node dist/main.js",

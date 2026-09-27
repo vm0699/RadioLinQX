@@ -1,4 +1,4 @@
-# Running & testing the RadioLinQ clone
+# Running & testing RadBridge
 
 Two ways to run. **Local mode needs no Docker** and is the fastest way to see
 everything working today.

@@ -1,4 +1,4 @@
-// Tool registration + the mapping from RadioLinQ's toolbar to Cornerstone3D
+// Tool registration + the mapping from RadBridge's toolbar to Cornerstone3D
 // tool names. Missing tool classes (version differences) are skipped gracefully.
 
 import * as csTools from '@cornerstonejs/tools';
@@ -6,7 +6,7 @@ import * as csTools from '@cornerstonejs/tools';
 const { Enums: csToolsEnums, ToolGroupManager, addTool } = csTools;
 const { MouseBindings } = csToolsEnums;
 
-export const TOOL_GROUP_ID = 'RADIOLINQ_TOOLGROUP';
+export const TOOL_GROUP_ID = 'RADBRIDGE_TOOLGROUP';
 
 /** Toolbar id -> Cornerstone tool class (guarded; may be undefined per version). */
 const TOOL_CLASSES: Record<string, unknown> = {
