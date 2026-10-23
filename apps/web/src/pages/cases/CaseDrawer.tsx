@@ -25,6 +25,7 @@ export function CaseDrawer({
   onClose,
   onChanged,
   onOpenViewer,
+  onOpenVR,
 }: {
   caseId: string | null;
   settings: AppSettings | null;
@@ -32,6 +33,7 @@ export function CaseDrawer({
   onClose: () => void;
   onChanged: () => void;
   onOpenViewer: (c: CaseView) => void;
+  onOpenVR?: (c: CaseView) => void;
 }) {
   const { message } = AntdApp.useApp();
   const [c, setC] = useState<CaseView | null>(null);
@@ -176,6 +178,9 @@ export function CaseDrawer({
       extra={
         c && (
           <Space>
+            {c.hasImages && onOpenVR && c.imageCount >= 12 && (
+              <Button onClick={() => onOpenVR(c)}>Open in VR / 3D</Button>
+            )}
             {c.hasImages && (
               <Button type="primary" onClick={() => onOpenViewer(c)}>
                 Open viewer

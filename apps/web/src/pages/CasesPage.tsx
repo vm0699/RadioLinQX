@@ -15,6 +15,7 @@ import { CaseDrawer } from './cases/CaseDrawer';
 import { SeriesPickerModal } from './cases/SeriesPickerModal';
 import { CaseRowActions } from './cases/CaseRowActions';
 import { StatusTag, TatCell } from './cases/cells';
+import { vrUrl } from '../vr/xr';
 
 type Filters = {
   patientId: string;
@@ -115,6 +116,12 @@ export function CasesPage() {
     )}&series=${encodeURIComponent(series)}`;
     const w = window.open(url, '_blank');
     if (!w) window.location.assign(url); // popup blocked → same tab
+  };
+
+  const openVR = (c: CaseView) => {
+    const url = vrUrl(c.id, c.studyInstanceUid ?? '', c.seriesInstanceUids?.[0]);
+    const w = window.open(url, '_blank');
+    if (!w) window.location.assign(url);
   };
 
   const columns: ColumnsType<CaseView> = [
@@ -369,6 +376,7 @@ export function CasesPage() {
         onClose={() => setDrawerId(null)}
         onChanged={load}
         onOpenViewer={openViewer}
+        onOpenVR={openVR}
       />
 
       <SeriesPickerModal

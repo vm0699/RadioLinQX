@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Dropdown, Slider, InputNumber, Select, Popover, Modal, Tooltip } from 'antd';
 import { useViewer, type ProjectionMode, type PrimaryToolKey } from './store';
 import { setPrimaryTool, MEASURE_MENU } from './tools';
@@ -15,6 +15,7 @@ import {
 import * as csTools from '@cornerstonejs/tools';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { recordViewportWebM } from './videoExport';
+import { isVolumetric, useXRSupport, vrUrl } from '../vr/xr';
 
 const VRT_PRESETS = [
   'CT-Bone', 'CT-Bones', 'CT-AAA', 'CT-Cardiac', 'CT-Chest-Contrast-Enhanced',
@@ -58,12 +59,23 @@ function TB({
 
 export function Toolbar({ onReport }: { onReport?: () => void }) {
   const navigate = useNavigate();
+  const [sp] = useSearchParams();
+  const xr = useXRSupport();
   const st = useViewer();
   const trackRef = useRef<HTMLDivElement>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const activeStackVp = stackViewportId(st.activeViewportIndex);
   const hasSeries = st.series.length > 0;
   const in3dOrMpr = st.mpr || st.vrt;
+  const vrSeriesUid = st.assignments[st.activeViewportIndex] ?? st.series[0]?.seriesInstanceUid;
+  const vrSeries = st.series.find((x) => x.seriesInstanceUid === vrSeriesUid);
+  const canVR =
+    !!st.studyInstanceUid &&
+    !!vrSeries &&
+    isVolumetric({ modality: vrSeries.modality, instanceCount: vrSeries.imageIds?.length ?? vrSeries.instanceCount });
+  const openVR = () =>
+    st.studyInstanceUid && vrSeriesUid &&
+    navigate(vrUrl(sp.get('case') ?? undefined, st.studyInstanceUid, vrSeriesUid));
 
   const pick = (tool: PrimaryToolKey) => {
     setPrimaryTool(tool);
@@ -150,6 +162,17 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
 
         <TB label="VRT" active={st.vrt} disabled={!hasSeries} onClick={toggleVrt} />
         <TB label="MPR" active={st.mpr} disabled={!hasSeries} onClick={toggleMpr} />
+        <Tooltip
+          title={
+            !canVR
+              ? 'VR / 3D needs a multi-slice CT, MR or PET series'
+              : xr.vr
+                ? 'VR headset detected — open this series in immersive VR'
+                : 'Open in the VR / 3D viewer (works on desktop; headsets add immersive mode)'
+          }
+        >
+          <span><TB label="VR" badge={xr.vr ? '●' : undefined} active={xr.vr && canVR} disabled={!canVR} onClick={openVR} /></span>
+        </Tooltip>
         <TB label="Cross" active={st.crosshairs} disabled={!st.mpr} onClick={() => st.set('crosshairs', !st.crosshairs)} />
 
         <div className="tb-plane" aria-disabled={!st.mpr}>

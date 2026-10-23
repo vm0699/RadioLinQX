@@ -431,3 +431,51 @@ a { color: var(--primary); }
 }
 .series-meta { min-width: 0; }
 .series-title { font-weight: 600; }
+
+/* ================================================================
+   VR / 3D page (dark, reuses .viewer-shell tokens)
+   ================================================================ */
+.vr-title { color: var(--text-2); font-size: 13px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-body { flex: 1; display: flex; min-height: 0; }
+.vr-side {
+  width: 316px; flex-shrink: 0; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface-2); border-right: 1px solid var(--border); padding: 12px 14px 24px;
+}
+.vr-stage {
+  position: relative; flex: 1; min-width: 0;
+  background: radial-gradient(ellipse at 50% 38%, #16233f 0%, #0a1020 55%, #05070d 100%);
+}
+.vr-canvas { position: absolute; inset: 0; }
+.vr-controls section { margin-bottom: 18px; }
+.vr-controls h4 {
+  margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.vr-row { margin-top: 10px; }
+.vr-row-label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.vr-row .ant-slider { margin: 6px 6px 4px; }
+.vr-switches { display: flex; gap: 16px; margin-top: 10px; font-size: 13px; }
+.vr-switches label, .vr-inline { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.vr-btnrow, .vr-export { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.vr-export .ant-btn { flex: 1 1 calc(50% - 6px); }
+.vr-help { margin: 0; padding-left: 16px; font-size: 12px; color: var(--text-2); line-height: 1.7; }
+.vr-hud {
+  position: absolute; left: 14px; bottom: 14px; padding: 8px 12px; border-radius: 10px;
+  background: rgba(8, 14, 28, .82); border: 1px solid var(--border-strong);
+  font-size: 13px; color: var(--text); pointer-events: none; backdrop-filter: blur(6px);
+}
+.vr-hud-ruler { margin-top: 4px; color: #facc15; display: flex; gap: 12px; }
+.vr-hint { position: absolute; right: 14px; bottom: 14px; font-size: 12px; color: var(--muted); pointer-events: none; }
+.vr-busy {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: 999px; background: rgba(37, 99, 235, .9); color: #fff; font-size: 13px;
+}
+.vr-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 7, 13, .72); z-index: 5; }
+.vr-loading-card {
+  width: min(420px, 86%); padding: 22px 24px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-md);
+}
+.vr-loading-title { font-weight: 600; margin-bottom: 8px; }
+@media (max-width: 820px) {
+  .vr-body { flex-direction: column-reverse; }
+  .vr-side { width: auto; max-height: 42%; border-right: 0; border-top: 1px solid var(--border); }
+}

@@ -55,6 +55,12 @@ const router = createBrowserRouter([
   },
   // viewer is full-screen, outside the dashboard chrome
   { path: '/viewer', element: <ViewerPage />, errorElement: <RouteErrorFallback /> },
+  // VR / 3D (three.js + WebXR) — code-split so the dashboard doesn't pay for it
+  {
+    path: '/vr',
+    lazy: async () => ({ Component: (await import('./pages/VRPage')).VRPage }),
+    errorElement: <RouteErrorFallback />,
+  },
   { path: '*', element: <Navigate to="/" replace /> },
 ]);
 

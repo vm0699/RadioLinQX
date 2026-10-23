@@ -21,6 +21,16 @@ cases, reporting workflow, referring doctors, settings, notifications.
 | Cine / export | Play clip + speed; PNG frame capture; WebM viewport capture |
 | Overlay | Patient/study metadata (from the case), corner readouts (dims, slice thickness, instance/series #, zoom, W/L), A/P/L/R markers |
 
+### VR / 3D (WebXR)
+| Area | Feature |
+|---|---|
+| Entry | **VR** button in the viewer toolbar · **Open in VR / 3D** in the case drawer · "VR headset ready" detection |
+| Rendering | GPU ray-marched volume (lighting, MIP), iso-surface mesh, MPR slice plane, clip plane — desktop orbit **and** immersive (Quest, PC-VR, Vision Pro) |
+| In headset | grab / scale / rotate the scan, wrist tablet, window-level, presets, HU probe, mm ruler, hand pinch |
+| Conversion | DICOM → **GLB · USDZ · STL · NIfTI** (full-res) in the browser |
+
+Details, controls and how to test without a headset: [`docs/VR.md`](docs/VR.md).
+
 ### Dashboard
 | Area | Feature |
 |---|---|
