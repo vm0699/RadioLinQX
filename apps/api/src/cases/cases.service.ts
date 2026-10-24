@@ -368,6 +368,10 @@ export class CasesService {
     );
   }
 
+  async logSegmentation(id: string, detail: string): Promise<void> {
+    await this.appendEvents(id, [newEvent('SEGMENTATION', detail)]);
+  }
+
   remove(id: string) {
     return this.store.remove(id);
   }

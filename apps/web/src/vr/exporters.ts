@@ -36,9 +36,16 @@ function exportMesh(geometry: THREE.BufferGeometry, matrix: THREE.Matrix4, color
       }
     }
   }
+  const coloured = !!g.getAttribute('color');
   const mesh = new THREE.Mesh(
     g,
-    new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0, side: THREE.DoubleSide }),
+    new THREE.MeshStandardMaterial({
+      color: coloured ? 0xffffff : color,
+      vertexColors: coloured,
+      roughness: 0.55,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    }),
   );
   mesh.name = name;
   return mesh;

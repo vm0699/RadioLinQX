@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Alert, App as AntdApp, Button, ConfigProvider, Progress, Segmented, Select, Slider, Switch, Tag, Tooltip,
+  Alert, App as AntdApp, Button, Collapse, ConfigProvider, Input, Progress, Segmented, Select, Slider, Switch, Tag, Tooltip,
   theme as antdTheme,
 } from 'antd';
+import type { NameScheme } from '../vr/segNames';
 import { api, type SeriesSummary } from '../api/client';
 import { loadFullVolume, prepareVolume } from '../vr/volumeData';
-import { VRScene, AXIS_NAMES, type Axis } from '../vr/VRScene';
+import { VRScene, AXIS_NAMES, type Axis, type SegPersist } from '../vr/VRScene';
 import { isVolumetric, useXRSupport, vrUrl } from '../vr/xr';
 
 const DARK = {
@@ -95,10 +96,28 @@ function VRInner() {
         if (cancelled || !hostRef.current) return;
         setProgress({ f: 0.97, label: 'Starting renderer…' });
         await new Promise((r) => setTimeout(r, 20));
+        const persist: SegPersist | undefined = caseId
+          ? {
+              exists: async () => (await api.segmentationInfo(caseId)).exists,
+              load: async () => {
+                const info = await api.segmentationInfo(caseId);
+                if (!info.exists) return null;
+                const file = await api.segmentationFile(caseId);
+                return file ? { file, meta: info.meta } : null;
+              },
+              save: (file, meta) => api.saveSegmentation(caseId, file, meta),
+              remove: async () => {
+                await api.deleteSegmentation(caseId);
+              },
+            }
+          : undefined;
         made = new VRScene(hostRef.current, prepared, {
           title: headline || 'Scan',
           baseName: (caseId || chosen.seriesInstanceUid.slice(-8)).replace(/[^\w-]+/g, '_'),
+          seriesUid: chosen.seriesInstanceUid,
+          persist,
         });
+        void made.segInit();
         if (import.meta.env.DEV) (window as unknown as { __vr: VRScene }).__vr = made;
         setScene(made);
         setProgress(null);
@@ -385,6 +404,8 @@ function Controls({ scene }: { scene: VRScene }) {
         </div>
       </section>
 
+      <SegSection scene={scene} />
+
       <section>
         <h4>Convert &amp; export</h4>
         <div className="vr-export">
@@ -419,5 +440,159 @@ function Controls({ scene }: { scene: VRScene }) {
         </ul>
       </section>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Segmentation (hide organs)
+// ---------------------------------------------------------------------------
+
+const TOOL_HINT: Record<string, string> = {
+  off: 'Pick a tool, then click the scan.',
+  hide: 'Click a structure to hide it (click again to show). On un-segmented areas it grows a region and hides that.',
+  grow: 'Click to grow a region from that point (same tissue, connected). Raise Leak control if it bleeds into neighbours.',
+  carve: 'Drag over the scan to cut it away with a brush. Right-drag to orbit.',
+};
+
+function SegSection({ scene }: { scene: VRScene }) {
+  const { state: s, info } = useSyncExternalStore(scene.subscribe, scene.getSnapshot);
+  const seg = info.seg;
+  const [scheme, setScheme] = useState<NameScheme | 'auto'>('auto');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const busy = !!info.busy;
+  const u = scene.unitLabel;
+  const tolMax = scene.volume.isCT ? 400 : Math.max(2, (scene.volume.p99 - scene.volume.p2) * 0.6);
+  const byGroup = new Map<string, typeof seg.labels>();
+  for (const l of seg.labels) byGroup.set(l.group, [...(byGroup.get(l.group) ?? []), l]);
+
+  return (
+    <section>
+      <h4>Segment · hide organs</h4>
+      <Segmented
+        block
+        value={s.segTool}
+        onChange={(v) => scene.setState({ segTool: v as typeof s.segTool })}
+        options={[
+          { label: 'Off', value: 'off' },
+          { label: 'Hide', value: 'hide' },
+          { label: 'Grow', value: 'grow' },
+          { label: 'Carve', value: 'carve' },
+        ]}
+      />
+      <div className="dim" style={{ margin: '6px 0 2px' }}>{TOOL_HINT[s.segTool]}</div>
+      {(s.segTool === 'grow' || s.segTool === 'hide') && (
+        <>
+          <Row label={`Tolerance ± ${Math.round(s.segTol)} ${u}`}>
+            <Slider min={1} max={tolMax} step={1} value={Math.min(s.segTol, tolMax)} onChange={(v) => scene.setState({ segTol: v })} />
+          </Row>
+          <Row label={`Leak control ${s.segLeak}`}>
+            <Slider min={0} max={3} step={1} value={s.segLeak} onChange={(v) => scene.setState({ segLeak: v })} />
+          </Row>
+        </>
+      )}
+      {s.segTool === 'carve' && (
+        <Row label={`Brush ${Math.round(s.brushMm)} mm`}>
+          <Slider min={2} max={Math.max(10, Math.round(scene.volume.sizeMm[0] * 0.2))} step={1} value={s.brushMm} onChange={(v) => scene.setState({ brushMm: v })} />
+        </Row>
+      )}
+      <div className="vr-switches">
+        <label><Switch size="small" checked={s.segAutoHide} onChange={(v) => scene.setState({ segAutoHide: v })} /> Hide new regions</label>
+        <label><Switch size="small" checked={s.segMargin} onChange={(v) => scene.setState({ segMargin: v })} /> Soft edge</label>
+      </div>
+      <div className="vr-btnrow">
+        <Button size="small" type="primary" disabled={busy} onClick={() => void scene.segAuto()}>Auto-segment</Button>
+        <Button size="small" disabled={!seg.canUndo} onClick={() => scene.segUndo()}>Undo</Button>
+        <Button size="small" disabled={!seg.hasHidden} onClick={() => scene.segShowAll()}>Show all</Button>
+        <Button size="small" danger disabled={!seg.labels.length} onClick={() => scene.segClear()}>Clear</Button>
+      </div>
+
+      <div className="vr-row">
+        <span className="vr-row-label">Organ label map (NIfTI from TotalSegmentator / 3D Slicer)</span>
+        <div className="vr-btnrow" style={{ marginTop: 4 }}>
+          <Select
+            size="small"
+            style={{ width: 150 }}
+            value={scheme}
+            onChange={setScheme}
+            options={[
+              { value: 'auto', label: 'Names: auto' },
+              { value: 'totalseg', label: 'TotalSegmentator' },
+              { value: 'generic', label: 'Generic' },
+            ]}
+          />
+          <Button size="small" disabled={busy} onClick={() => fileRef.current?.click()}>Import .nii / .nii.gz</Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".nii,.gz,.nii.gz,application/gzip"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void scene.segImportFile(f, scheme);
+              e.target.value = '';
+            }}
+          />
+        </div>
+      </div>
+
+      {seg.note && <Alert style={{ marginTop: 8 }} type="info" showIcon message={seg.note} />}
+
+      {seg.labels.length > 0 && (
+        <Collapse
+          size="small"
+          style={{ marginTop: 10 }}
+          items={[...byGroup.entries()].map(([group, labels]) => {
+            const g = seg.groups.find((x) => x.name === group);
+            const anyShown = labels.some((l) => l.visible);
+            return {
+              key: group,
+              label: (
+                <span className="seg-group">
+                  <Switch
+                    size="small"
+                    checked={anyShown}
+                    onClick={(_v, e) => e.stopPropagation()}
+                    onChange={() => scene.segToggleGroup(group)}
+                  />
+                  <b>{group}</b>
+                  <span className="dim">{labels.length} · {Math.round(g?.ml ?? 0).toLocaleString()} mL</span>
+                </span>
+              ),
+              children: labels.map((l) => (
+                <div key={l.id} className={`seg-row${seg.selected === l.id ? ' sel' : ''}`}>
+                  <Switch size="small" checked={l.visible} onChange={() => scene.segToggle(l.id)} />
+                  <span className="seg-dot" style={{ background: `rgb(${l.color.map((c) => Math.round(c * 255)).join(',')})` }} />
+                  <Input
+                    size="small"
+                    variant="borderless"
+                    defaultValue={l.name}
+                    onBlur={(e) => scene.segRename(l.id, e.target.value)}
+                    onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+                  />
+                  <span className="dim seg-ml">{l.ml >= 10 ? Math.round(l.ml) : l.ml.toFixed(1)} mL</span>
+                  <Tooltip title="Solo (show only this)"><Button size="small" type="text" onClick={() => scene.segIsolate(l.id)}>◎</Button></Tooltip>
+                  <Tooltip title="Highlight"><Button size="small" type="text" onClick={() => scene.segSelect(l.id)}>◍</Button></Tooltip>
+                  <Tooltip title="Delete"><Button size="small" type="text" danger onClick={() => scene.segRemove(l.id)}>✕</Button></Tooltip>
+                </div>
+              )),
+            };
+          })}
+        />
+      )}
+
+      <div className="vr-btnrow" style={{ marginTop: 10 }}>
+        <Button size="small" disabled={busy || !seg.labels.length || !scene.hasPersist} onClick={() => void scene.segSave()}>Save to case</Button>
+        <Button size="small" disabled={busy || !scene.hasPersist || seg.serverHas === false} onClick={() => void scene.segLoad()}>Load saved</Button>
+        <Button size="small" disabled={busy || !seg.labels.length} onClick={() => void scene.segExport()}>Labels .nii.gz</Button>
+        {seg.serverHas && scene.hasPersist && (
+          <Button size="small" danger disabled={busy} onClick={() => void scene.segDeleteSaved()}>Delete saved</Button>
+        )}
+      </div>
+      {scene.hasPersist && (
+        <div className="dim" style={{ marginTop: 4 }}>
+          {seg.serverHas ? '● A segmentation is saved for this case.' : 'Save once — it loads automatically in every headset.'}
+        </div>
+      )}
+    </section>
   );
 }

@@ -29,6 +29,9 @@ precision highp sampler2D;
 
 uniform sampler3D uVol;
 uniform sampler2D uLut;
+uniform sampler3D uMask;   // RG8: R = hidden, G = highlighted (segmentation)
+uniform float uMaskOn;
+uniform vec3  uHiColor;
 uniform float uWinMin;
 uniform float uWinInv;
 uniform float uDensity;
@@ -110,13 +113,21 @@ void main() {
   for (int i = 0; i < MAX_STEPS; i++) {
     if (t > tFar) break;
     if (tSlice > 0.0 && !sliceDone && t >= tSlice) {
-      float sv = winMap(textureLod(uVol, vOrigin + rd * tSlice, 0.0).r);
-      acc.rgb += (1.0 - acc.a) * 0.98 * vec3(sv);
-      acc.a += (1.0 - acc.a) * 0.98;
+      vec3 sp = vOrigin + rd * tSlice;
       sliceDone = true;
-      break;
+      if (uMaskOn < 0.5 || textureLod(uMask, sp, 0.0).r < 0.5) {
+        float sv = winMap(textureLod(uVol, sp, 0.0).r);
+        acc.rgb += (1.0 - acc.a) * 0.98 * vec3(sv);
+        acc.a += (1.0 - acc.a) * 0.98;
+        break;
+      }
     }
     vec3 p = vOrigin + rd * t;
+    vec2 m = vec2(0.0);
+    if (uMaskOn > 0.5) {
+      m = textureLod(uMask, p, 0.0).rg;
+      if (m.r > 0.5) { t += dt; continue; }   // hidden segment
+    }
     float v = textureLod(uVol, p, 0.0).r;
     if (uMip > 0.5) {
       mipMax = max(mipMax, v);
@@ -134,6 +145,7 @@ void main() {
           float k = smoothstep(0.002, 0.02, gm);
           col = mix(col, col * (0.35 + 0.65 * d) + pow(d, 20.0) * 0.22, k);
         }
+        col = mix(col, uHiColor, m.g * 0.6);
         acc.rgb += (1.0 - acc.a) * a * col;
         acc.a += (1.0 - acc.a) * a;
         if (acc.a > 0.97) break;
@@ -147,9 +159,12 @@ void main() {
     float al = clamp(w * 1.6, 0.0, 1.0) * clamp(uDensity, 0.0, 1.0);
     acc = vec4(vec3(w) * al, al);
   } else if (tSlice > 0.0 && !sliceDone && acc.a < 0.97) {
-    float sv = winMap(textureLod(uVol, vOrigin + rd * tSlice, 0.0).r);
-    acc.rgb += (1.0 - acc.a) * 0.98 * vec3(sv);
-    acc.a += (1.0 - acc.a) * 0.98;
+    vec3 sp = vOrigin + rd * tSlice;
+    if (uMaskOn < 0.5 || textureLod(uMask, sp, 0.0).r < 0.5) {
+      float sv = winMap(textureLod(uVol, sp, 0.0).r);
+      acc.rgb += (1.0 - acc.a) * 0.98 * vec3(sv);
+      acc.a += (1.0 - acc.a) * 0.98;
+    }
   }
 
   gl_FragColor = acc;
@@ -160,6 +175,7 @@ export function createVolumeMaterial(
   tex: THREE.Data3DTexture,
   lut: THREE.DataTexture,
   vol: PreparedVolume,
+  mask: THREE.Data3DTexture,
 ): THREE.ShaderMaterial {
   const [sx, sy, sz] = vol.sampled.spacing;
   return new THREE.ShaderMaterial({
@@ -178,6 +194,9 @@ export function createVolumeMaterial(
     uniforms: {
       uVol: { value: tex },
       uLut: { value: lut },
+      uMask: { value: mask },
+      uMaskOn: { value: 0 },
+      uHiColor: { value: new THREE.Vector3(1, 0.85, 0.2) },
       uWinMin: { value: 0 },
       uWinInv: { value: 1 },
       uDensity: { value: 1 },

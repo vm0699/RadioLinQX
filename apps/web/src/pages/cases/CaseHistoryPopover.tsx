@@ -13,6 +13,7 @@ const COLOR: Record<CaseEvent['type'], string> = {
   TAG: 'gray',
   LINK: 'gray',
   ATTACHMENT: 'gray',
+  SEGMENTATION: 'cyan',
   DUPLICATED: 'blue',
 };
 

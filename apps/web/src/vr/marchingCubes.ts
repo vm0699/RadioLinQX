@@ -69,10 +69,20 @@ export interface SurfaceStats {
  *          volume's outer corner) — place it under the same `mmSpace` transform
  *          as the volume box.
  */
+export interface SurfaceColors {
+  /** label id per voxel on the same grid as `vol` */
+  labels: Uint8Array;
+  /** rgb (0..1) × 256 */
+  palette: Float32Array;
+  /** colour for unlabeled voxels */
+  fallback: [number, number, number];
+}
+
 export async function extractSurface(
   vol: SampledVolume,
   iso: number,
   onProgress?: (f: number) => void,
+  colors?: SurfaceColors,
 ): Promise<{ geometry: THREE.BufferGeometry; stats: SurfaceStats }> {
   const [nx, ny, nz] = vol.dims;
   const [sx, sy, sz] = vol.spacing;
@@ -82,6 +92,7 @@ export async function extractSurface(
   const edgeVert = new Int32Array(nx * ny * nz * 3).fill(-1);
   const pos = new FloatBuf();
   const nor = new FloatBuf();
+  const col = colors ? new FloatBuf() : null;
   const idx = new IndexBuf();
   let vcount = 0;
 
@@ -123,6 +134,15 @@ export async function extractSurface(
     const len = Math.hypot(nxv, nyv, nzv) || 1;
     nxv /= len; nyv /= len; nzv /= len;
     nor.push(nxv, nyv, nzv);
+
+    if (col && colors) {
+      // colour of the corner that lies inside the surface (value >= iso)
+      const inA = va >= iso;
+      const idxIn = inA ? (az * ny + ay) * nx + ax : (bz * ny + by) * nx + bx;
+      const lab = colors.labels[idxIn];
+      if (lab) col.push(colors.palette[lab * 3], colors.palette[lab * 3 + 1], colors.palette[lab * 3 + 2]);
+      else col.push(colors.fallback[0], colors.fallback[1], colors.fallback[2]);
+    }
 
     edgeVert[slot] = vcount;
     return vcount++;
@@ -180,6 +200,7 @@ export async function extractSurface(
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(pos.done(), 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(nor.done(), 3));
+  if (col) geometry.setAttribute('color', new THREE.BufferAttribute(col.done(), 3));
   geometry.setIndex(new THREE.BufferAttribute(idx.done(), 1));
   geometry.computeBoundingSphere();
   return { geometry, stats: { vertices: vcount, triangles: idx.n / 3 } };

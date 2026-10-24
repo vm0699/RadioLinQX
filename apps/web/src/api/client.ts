@@ -60,7 +60,7 @@ export interface CaseEvent {
   by: string;
   type:
     | 'CREATED' | 'UPLOADED' | 'EDITED' | 'ASSIGNED' | 'STATUS'
-    | 'REPORT_SAVED' | 'REPORT_SIGNED' | 'TAG' | 'LINK' | 'ATTACHMENT' | 'DUPLICATED';
+    | 'REPORT_SAVED' | 'REPORT_SIGNED' | 'TAG' | 'LINK' | 'ATTACHMENT' | 'SEGMENTATION' | 'DUPLICATED';
   detail: string;
 }
 export interface CaseView {
@@ -264,6 +264,21 @@ export const api = {
     if (!res.ok) throw new Error((await res.text().catch(() => '')) || `${res.status}`);
     return res.json() as Promise<CaseView>;
   },
+  // 3D segmentation (VR viewer)
+  segmentationInfo: (id: string) =>
+    get<{ exists: boolean; size?: number; updatedAt?: string; meta?: unknown }>(`/api/cases/${id}/segmentation`),
+  segmentationFile: async (id: string) => {
+    const res = await fetch(`${API_BASE}/api/cases/${id}/segmentation/file`);
+    return res.ok ? res.arrayBuffer() : null;
+  },
+  saveSegmentation: async (id: string, file: Uint8Array, meta: unknown) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([file as BlobPart], { type: 'application/gzip' }), 'labels.nii.gz');
+    fd.append('meta', JSON.stringify(meta));
+    const res = await fetch(`${API_BASE}/api/cases/${id}/segmentation`, { method: 'PUT', body: fd });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || `${res.status}`);
+  },
+  deleteSegmentation: (id: string) => del<{ ok: boolean }>(`/api/cases/${id}/segmentation`),
   attachmentUrl: (id: string, aid: string) =>
     `${API_BASE}/api/cases/${id}/attachments/${aid}`,
 

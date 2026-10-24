@@ -29,7 +29,7 @@ interface Widget {
 }
 
 const W = 1280;
-const H = 960;
+const H = 1040;
 const COL_X = [28, 660];
 const COL_W = 592;
 const GAP = 10;
@@ -97,6 +97,26 @@ export class VRPanel {
 
   column(i: number) {
     this.col = i;
+  }
+
+  /** full-width tab row under the title */
+  tabs(items: BtnDesc[]) {
+    const bw = (W - 56 - GAP * (items.length - 1)) / items.length;
+    items.forEach((b, k) =>
+      this.widgets.push({
+        type: 'button',
+        id: `t${this.idSeq++}`,
+        x: 28 + k * (bw + GAP),
+        y: 84,
+        w: bw,
+        h: 54,
+        label: b.label,
+        active: b.active,
+        disabled: b.disabled,
+        onClick: b.onClick,
+      }),
+    );
+    this.cy = [152, 152];
   }
 
   title(text: string, right: string) {

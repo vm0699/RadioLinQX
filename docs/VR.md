@@ -18,6 +18,7 @@ Case drawer ▸ "Open in VR / 3D"      Viewer toolbar ▸ "VR"
 | MPR slice plane (axial / coronal / sagittal) | ✔ | ✔ |
 | Clip plane (cut the scan open) | ✔ | ✔ |
 | Presets · window / level · density · quality | ✔ sliders | ✔ tablet on your wrist + thumbsticks |
+| **Segmentation — hide organs** ([details](SEGMENTATION.md)) | ✔ click / brush | ✔ point + trigger, tablet **Segment** tab |
 | HU / signal probe | ✔ hover | ✔ point the ray |
 | 3D ruler in millimetres | ✔ 2 clicks | ✔ 2 trigger pulls |
 | Grab, move, scale, rotate the scan | – | ✔ grip / two grips / hand pinch |
@@ -51,7 +52,7 @@ WebXR needs **HTTPS** — the Vercel deployment already is; for local dev see be
 | **X** | ruler on/off · **Y** next preset |
 | **Hands** (hand-tracking) | pinch = grab, or click on the tablet |
 
-The tablet rides on the left controller (use **Pin panel** to park it in the room, **Swap hands** for lefties).
+The tablet has two tabs — **View** and **Segment** (auto-segment, Hide / Grow / Carve tools, per-group visibility, save to case). It rides on the left controller (use **Pin panel** to park it in the room, **Swap hands** for lefties).
 
 > Standalone headsets have a mobile GPU: it starts on **Quality: low**. If it feels heavy switch to **Surface** mode
 > (a polygon mesh renders far faster than ray-marching) or keep Quality low.
@@ -107,6 +108,7 @@ npm run dev            # apps/web  (+ API on :3000)
 | `exporters.ts` | GLB / USDZ / STL / NIfTI |
 | `VRScene.ts` | three.js scene, WebXR session, controllers & hands, picking, ruler |
 | `VRPanel.ts` | in-headset canvas tablet |
+| `segmentation.ts` · `nifti.ts` · `segNames.ts` | segmentation: labels, algorithms, NIfTI I/O ([docs](SEGMENTATION.md)) |
 | `xr.ts` | device detection hook, helpers |
 | `../pages/VRPage.tsx` | desktop UI |
 

@@ -92,6 +92,7 @@ export interface CaseEvent {
     | 'TAG'
     | 'LINK'
     | 'ATTACHMENT'
+    | 'SEGMENTATION'
     | 'DUPLICATED';
   detail: string;
 }

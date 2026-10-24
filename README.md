@@ -27,6 +27,7 @@ cases, reporting workflow, referring doctors, settings, notifications.
 | Entry | **VR** button in the viewer toolbar · **Open in VR / 3D** in the case drawer · "VR headset ready" detection |
 | Rendering | GPU ray-marched volume (lighting, MIP), iso-surface mesh, MPR slice plane, clip plane — desktop orbit **and** immersive (Quest, PC-VR, Vision Pro) |
 | In headset | grab / scale / rotate the scan, wrist tablet, window-level, presets, HU probe, mm ruler, hand pinch |
+| Segmentation | Auto-segment (CT: skin/fat/soft tissue/lungs/bone), point-to-hide, region grow, carve brush, **import organ label maps** (TotalSegmentator/Slicer NIfTI) with per-organ visibility, save to case — [`docs/SEGMENTATION.md`](docs/SEGMENTATION.md) |
 | Conversion | DICOM → **GLB · USDZ · STL · NIfTI** (full-res) in the browser |
 
 Details, controls and how to test without a headset: [`docs/VR.md`](docs/VR.md).

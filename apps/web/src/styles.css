@@ -479,3 +479,12 @@ a { color: var(--primary); }
   .vr-body { flex-direction: column-reverse; }
   .vr-side { width: auto; max-height: 42%; border-right: 0; border-top: 1px solid var(--border); }
 }
+
+/* segmentation list */
+.seg-group { display: inline-flex; align-items: center; gap: 8px; }
+.seg-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.seg-row.sel { background: rgba(45, 212, 191, .12); border-radius: 6px; }
+.seg-row .ant-input { flex: 1; min-width: 0; padding-inline: 4px; }
+.seg-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.seg-ml { font-size: 11px; white-space: nowrap; }
+.vr-controls .ant-collapse-content-box { padding: 6px 8px !important; }

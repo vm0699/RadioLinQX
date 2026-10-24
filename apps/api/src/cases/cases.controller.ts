@@ -237,6 +237,80 @@ export class CasesController {
     return c;
   }
 
+  // ---- 3D segmentation (labels.nii.gz + meta.json per case) ----
+  private segDir(id: string) {
+    const safe = id.replace(/[^\w.-]+/g, '_');
+    return path.join(dataDir(), 'segmentations', safe);
+  }
+
+  @Get(':id/segmentation')
+  async segmentation(@Param('id') id: string) {
+    const c = await this.cases.get(id);
+    if (!c) throw new NotFoundException();
+    const dir = this.segDir(id);
+    try {
+      const st = await fsp.stat(path.join(dir, 'labels.nii.gz'));
+      let meta: unknown = null;
+      try {
+        meta = JSON.parse(await fsp.readFile(path.join(dir, 'meta.json'), 'utf8'));
+      } catch {
+        /* meta optional */
+      }
+      return { exists: true, size: st.size, updatedAt: st.mtime.toISOString(), meta };
+    } catch {
+      return { exists: false };
+    }
+  }
+
+  @Get(':id/segmentation/file')
+  async segmentationFile(@Param('id') id: string, @Res() res: Response) {
+    const abs = path.join(this.segDir(id), 'labels.nii.gz');
+    try {
+      await fsp.access(abs);
+    } catch {
+      throw new NotFoundException('no segmentation saved for this case');
+    }
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', 'attachment; filename="labels.nii.gz"');
+    createReadStream(abs).pipe(res);
+  }
+
+  @Put(':id/segmentation')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 40 * 1024 * 1024 } }))
+  async saveSegmentation(
+    @Param('id') id: string,
+    @UploadedFile() file: { buffer: Buffer } | undefined,
+    @Body() body: { meta?: string },
+  ) {
+    const c = await this.cases.get(id);
+    if (!c) throw new NotFoundException();
+    if (!file?.buffer?.length) throw new BadRequestException('no file');
+    let meta: unknown = null;
+    if (body?.meta) {
+      try {
+        meta = JSON.parse(body.meta);
+      } catch {
+        throw new BadRequestException('meta must be JSON');
+      }
+    }
+    const dir = this.segDir(id);
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, 'labels.nii.gz'), file.buffer);
+    await fsp.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta ?? {}));
+    const n = Array.isArray((meta as { labels?: unknown[] } | null)?.labels)
+      ? (meta as { labels: unknown[] }).labels.length
+      : 0;
+    await this.cases.logSegmentation(id, `3D segmentation saved${n ? ` (${n} segments)` : ''}`);
+    return { ok: true, size: file.buffer.length };
+  }
+
+  @Delete(':id/segmentation')
+  async deleteSegmentation(@Param('id') id: string) {
+    await fsp.rm(this.segDir(id), { recursive: true, force: true });
+    await this.cases.logSegmentation(id, '3D segmentation deleted');
+    return { ok: true };
+  }
+
   // ---- attachments ----
   @Post(':id/attachments')
   @UseInterceptors(

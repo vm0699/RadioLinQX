@@ -27,9 +27,18 @@ import {
   type TFPreset,
 } from './transferFunction';
 import { createVolumeMaterial } from './volumeShader';
-import { extractSurface } from './marchingCubes';
-import { exportGLB, exportNIfTI, exportSTL, exportUSDZ } from './exporters';
+import { extractSurface, type SurfaceColors } from './marchingCubes';
+import { download, exportGLB, exportNIfTI, exportSTL, exportUSDZ } from './exporters';
 import { VRPanel } from './VRPanel';
+import {
+  Segmentation,
+  autoSegment,
+  openingAroundSeed,
+  regionGrow,
+  CARVE_ID,
+} from './segmentation';
+import { importLabels, readNifti, writeLabelNifti } from './nifti';
+import type { NameScheme } from './segNames';
 
 export type RenderMode = 'volume' | 'surface' | 'slice';
 export type Quality = 'low' | 'medium' | 'high';
@@ -60,6 +69,56 @@ export interface VRState {
   panelHand: 'left' | 'right';
   panelPinned: boolean;
   panelVisible: boolean;
+  panelTab: 'view' | 'segment';
+  /** segmentation tool: point at a structure to hide it / carve with a brush */
+  segTool: 'off' | 'hide' | 'grow' | 'carve';
+  /** region-grow tolerance (± native units) */
+  segTol: number;
+  /** 0..3 morphological-opening radius that stops region growing leaking */
+  segLeak: number;
+  brushMm: number;
+  /** newly picked regions are hidden straight away */
+  segAutoHide: boolean;
+  /** also hide the 1-voxel rim around hidden segments */
+  segMargin: boolean;
+  segListMode: 'groups' | 'labels';
+  segPage: number;
+}
+
+export interface SegLabelView {
+  id: number;
+  name: string;
+  group: string;
+  color: [number, number, number];
+  visible: boolean;
+  ml: number;
+  source: string;
+}
+
+export interface SegGroupView {
+  name: string;
+  ids: number[];
+  shown: number;
+  total: number;
+  ml: number;
+}
+
+export interface SegInfo {
+  labels: SegLabelView[];
+  groups: SegGroupView[];
+  canUndo: boolean;
+  hasHidden: boolean;
+  selected: number | null;
+  serverHas: boolean | null;
+  note: string | null;
+}
+
+/** persistence hooks supplied by the page (kept out of the scene so it stays API-agnostic) */
+export interface SegPersist {
+  exists(): Promise<boolean>;
+  load(): Promise<{ file: ArrayBuffer; meta: unknown } | null>;
+  save(file: Uint8Array, meta: unknown): Promise<void>;
+  remove(): Promise<void>;
 }
 
 export interface Measurement {
@@ -76,6 +135,7 @@ export interface VRInfo {
   hands: boolean;
   controllers: number;
   error: string | null;
+  seg: SegInfo;
 }
 
 export interface VRSnapshot {
@@ -105,6 +165,8 @@ export interface VROptions {
   title: string;
   subtitle?: string;
   baseName: string;
+  seriesUid?: string;
+  persist?: SegPersist;
 }
 
 export class VRScene {
@@ -126,6 +188,15 @@ export class VRScene {
   private surfaceDirty = true;
   private surfaceTimer: number | undefined;
   private meshVol: SampledVolume | null = null;
+
+  // segmentation
+  private seg: Segmentation | null = null;
+  private maskTex: THREE.Data3DTexture;
+  private maskData: Uint8Array | null = null;
+  private hidLut: Uint8Array = new Uint8Array(256);
+  private carving = false;
+  private lastCarveAt = 0;
+  private maskTimer: number | undefined;
 
   private model = new THREE.Group();
   private mmSpace = new THREE.Group();
@@ -184,7 +255,13 @@ export class VRScene {
     this.tex = makeTexture(vol);
     const preset = defaultPreset(vol.isCT);
     this.lut = buildLut(preset);
-    this.material = createVolumeMaterial(this.tex, this.lut, vol);
+    // 1×1×1 placeholder until a segmentation exists (the shader always has a mask bound)
+    this.maskTex = new THREE.Data3DTexture(new Uint8Array(2), 1, 1, 1);
+    this.maskTex.format = THREE.RGFormat;
+    this.maskTex.type = THREE.UnsignedByteType;
+    this.maskTex.unpackAlignment = 1;
+    this.maskTex.needsUpdate = true;
+    this.material = createVolumeMaterial(this.tex, this.lut, vol, this.maskTex);
 
     this.mmToModelM = mmToModel(vol);
     this.mmSpace.matrixAutoUpdate = false;
@@ -276,6 +353,15 @@ export class VRScene {
       panelHand: 'left',
       panelPinned: false,
       panelVisible: true,
+      panelTab: 'view',
+      segTool: 'off',
+      segTol: vol.isCT ? 90 : Math.max(1, 0.18 * (vol.p99 - vol.p2)),
+      segLeak: 1,
+      brushMm: Math.max(4, Math.round(Math.max(...vol.sizeMm) * 0.04)),
+      segAutoHide: true,
+      segMargin: true,
+      segListMode: 'groups',
+      segPage: 0,
     };
     this._info = {
       busy: null,
@@ -287,6 +373,7 @@ export class VRScene {
       hands: false,
       controllers: 0,
       error: null,
+      seg: { labels: [], groups: [], canUndo: false, hasHidden: false, selected: null, serverHas: null, note: null },
     };
     this.snap = { state: this._state, info: this._info, v: 0 };
 
@@ -351,7 +438,18 @@ export class VRScene {
 
   setState(patch: Partial<VRState>) {
     const prev = this._state;
+    patch = { ...patch };
+    if (patch.measure) patch.segTool = 'off';
+    if (patch.segTool && patch.segTool !== 'off') patch.measure = false;
     this._state = { ...prev, ...patch };
+    if (patch.segTool && patch.segTool !== prev.segTool) {
+      // carving owns the left mouse button; orbit moves to the right button
+      const mb = this.controls.mouseButtons as unknown as { LEFT: number; RIGHT: number };
+      mb.LEFT = patch.segTool === 'carve' ? -1 : THREE.MOUSE.ROTATE;
+      mb.RIGHT = patch.segTool === 'carve' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+      if (patch.segTool !== 'off') this.ensureSeg();
+    }
+    if (patch.segMargin != null && patch.segMargin !== prev.segMargin) this.refreshSeg();
     if (patch.mode && patch.mode !== prev.mode && patch.mode === 'surface') void this.ensureSurface();
     if (patch.iso != null && patch.iso !== prev.iso) {
       this.surfaceDirty = true;
@@ -370,7 +468,7 @@ export class VRScene {
     const p = PRESETS.find((x) => x.id === id);
     if (!p) return;
     buildLut(p, this.lut);
-    this.surfaceMat.color.setHex(p.surfaceColor);
+    if (!this.surfaceMat.vertexColors) this.surfaceMat.color.setHex(p.surfaceColor);
     const w = presetWindow(p, this.vol);
     this.surfaceDirty = true;
     this.setState({ presetId: id, center: w.center, width: w.width, iso: presetIso(p, this.vol) });
@@ -450,11 +548,54 @@ export class VRScene {
         const s = this.vol.sampled;
         this.meshVol = Math.max(...s.dims) <= MESH_MAX_DIM ? s : await resampleSampled(s, MESH_MAX_DIM);
       }
-      const { geometry, stats } = await extractSurface(this.meshVol, this._state.iso, (f) => {
-        this._info.busy = `Building 3D surface… ${Math.round(f * 100)}%`;
-        this.emit();
-      });
-      if (stats.triangles === 0) throw new Error('No surface at this level — change the surface level.');
+      // segmentation: hidden segments are removed from the mesh volume, visible
+      // ones colour the surface per label
+      let meshSrc: SampledVolume = this.meshVol;
+      let colors: SurfaceColors | undefined;
+      const seg = this.seg;
+      if (seg && seg.hasLabels) {
+        const base = this.meshVol;
+        const [mx, my, mz] = base.dims;
+        const [sx, sy, sz] = seg.dims;
+        const hid = seg.hiddenLut();
+        const data = new Float32Array(base.data.length);
+        const labels = new Uint8Array(base.data.length);
+        const floor = this.vol.min;
+        for (let k = 0; k < mz; k++) {
+          const sk = Math.min(sz - 1, Math.floor(((k + 0.5) * sz) / mz));
+          for (let j = 0; j < my; j++) {
+            const sj = Math.min(sy - 1, Math.floor(((j + 0.5) * sy) / my));
+            for (let i = 0; i < mx; i++) {
+              const si = Math.min(sx - 1, Math.floor(((i + 0.5) * sx) / mx));
+              const lab = seg.labels[(sk * sy + sj) * sx + si];
+              const mi = (k * my + j) * mx + i;
+              labels[mi] = lab;
+              data[mi] = hid[lab] ? floor : base.data[mi];
+            }
+          }
+        }
+        meshSrc = { ...base, data };
+        const palette = new Float32Array(256 * 3);
+        for (const l of seg.table.values()) palette.set(l.color, l.id * 3);
+        const pc = new THREE.Color(this.currentPreset().surfaceColor);
+        colors = { labels, palette, fallback: [pc.r, pc.g, pc.b] };
+      }
+      const { geometry, stats } = await extractSurface(
+        meshSrc,
+        this._state.iso,
+        (f) => {
+          this._info.busy = `Building 3D surface… ${Math.round(f * 100)}%`;
+          this.emit();
+        },
+        colors,
+      );
+      if (stats.triangles === 0) throw new Error('No surface at this level — change the surface level or show more segments.');
+      const useColors = !!colors;
+      if (this.surfaceMat.vertexColors !== useColors) {
+        this.surfaceMat.vertexColors = useColors;
+        this.surfaceMat.needsUpdate = true;
+      }
+      this.surfaceMat.color.setHex(useColors ? 0xffffff : this.currentPreset().surfaceColor);
       this.surfaceMesh.geometry.dispose();
       this.surfaceMesh.geometry = geometry;
       this.surfaceDirty = false;
@@ -469,6 +610,383 @@ export class VRScene {
       this.rebuildPanel();
       this.emit();
     }
+  }
+
+  // =========================================================================
+  // segmentation
+  // =========================================================================
+
+  get segmentation(): Segmentation | null {
+    return this.seg;
+  }
+
+  get hasPersist(): boolean {
+    return !!this.opts.persist;
+  }
+
+  private regionCount = 0;
+
+  private ensureSeg(): Segmentation {
+    if (this.seg) return this.seg;
+    const [nx, ny, nz] = this.vol.sampled.dims;
+    this.seg = new Segmentation(this.vol.sampled.dims, this.vol.sampled.spacing);
+    this.maskData = new Uint8Array(nx * ny * nz * 2);
+    const old = this.maskTex;
+    const t = new THREE.Data3DTexture(this.maskData, nx, ny, nz);
+    t.format = THREE.RGFormat;
+    t.type = THREE.UnsignedByteType;
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.wrapS = t.wrapT = t.wrapR = THREE.ClampToEdgeWrapping;
+    t.unpackAlignment = 1;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    this.maskTex = t;
+    this.material.uniforms.uMask.value = t;
+    old.dispose();
+    return this.seg;
+  }
+
+  private segNote(msg: string | null) {
+    this._info.seg = { ...this._info.seg, note: msg };
+  }
+
+  private updateSegInfo() {
+    const seg = this.seg;
+    const prev = this._info.seg;
+    if (!seg) {
+      this._info.seg = { ...prev, labels: [], groups: [], canUndo: false, hasHidden: false, selected: null };
+      return;
+    }
+    const vox = (seg.spacing[0] * seg.spacing[1] * seg.spacing[2]) / 1000;
+    this._info.seg = {
+      ...prev,
+      labels: seg.list.map((l) => ({
+        id: l.id, name: l.name, group: l.group, color: l.color, visible: l.visible, ml: l.voxels * vox, source: l.source,
+      })),
+      groups: seg.groups().map((g) => ({ name: g.name, ids: g.ids, shown: g.shown, total: g.ids.length, ml: g.voxels * vox })),
+      canUndo: seg.canUndo,
+      hasHidden: seg.hasHidden,
+      selected: seg.selected,
+    };
+  }
+
+  /** push the label state to the GPU mask + UI (call after any label/visibility change) */
+  private refreshSeg() {
+    const seg = this.seg;
+    if (seg && this.maskData) {
+      const r = seg.buildMask(this._state.segMargin, this.maskData);
+      this.maskTex.needsUpdate = true;
+      this.material.uniforms.uMaskOn.value = r.hidden || r.highlight ? 1 : 0;
+      const sel = seg.selected != null ? seg.table.get(seg.selected) : null;
+      const hc = sel ? sel.color : ([1, 0.85, 0.2] as [number, number, number]);
+      this.material.uniforms.uHiColor.value.set(hc[0], hc[1], hc[2]);
+      this.hidLut = seg.hiddenLut();
+      this.surfaceDirty = true;
+      if (this._state.mode === 'surface') {
+        window.clearTimeout(this.surfaceTimer);
+        this.surfaceTimer = window.setTimeout(() => void this.ensureSurface(), 500);
+      }
+    }
+    this.updateSegInfo();
+    this.rebuildPanel();
+    this.emit();
+  }
+
+  private segHiddenAt(x: number, y: number, z: number): boolean {
+    const seg = this.seg;
+    if (!seg) return false;
+    const [nx, ny, nz] = seg.dims;
+    const sp = seg.spacing;
+    const i = Math.floor(x / sp[0]);
+    const j = Math.floor(y / sp[1]);
+    const k = Math.floor(z / sp[2]);
+    if (i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz) return false;
+    return this.hidLut[seg.labels[(k * ny + j) * nx + i]] === 1;
+  }
+
+  async segAuto() {
+    const seg = this.ensureSeg();
+    await this.withBusy('Segmenting…', async () => {
+      const res = await autoSegment(this.vol, seg, (f, l) => {
+        this._info.busy = `Segmenting… ${Math.round(f * 100)}% · ${l}`;
+        this.emit();
+      });
+      this.segNote(
+        res.kind === 'ct'
+          ? 'Auto: skin layer, fat, soft tissue, lungs, bone. Use Grow to split organs out.'
+          : 'Auto: skin layer + interior. Use Grow / Carve to isolate structures.',
+      );
+    });
+    this.refreshSeg();
+  }
+
+  /**
+   * Tool action at a point on the scan (mm space).
+   *  hide: labelled voxel → toggle that label; unlabelled → grow a region and hide it
+   *  grow: grow a region from the point (taking over voxels of the label under it)
+   */
+  async segActAt(mm: THREE.Vector3, tool: 'hide' | 'grow') {
+    const seg = this.ensureSeg();
+    const [nx, ny, nz] = seg.dims;
+    const [sx, sy, sz] = seg.spacing;
+    const i = THREE.MathUtils.clamp(Math.floor(mm.x / sx), 0, nx - 1);
+    const j = THREE.MathUtils.clamp(Math.floor(mm.y / sy), 0, ny - 1);
+    const k = THREE.MathUtils.clamp(Math.floor(mm.z / sz), 0, nz - 1);
+    const seed = (k * ny + j) * nx + i;
+    const existing = seg.labels[seed];
+
+    if (tool === 'hide' && existing) {
+      const l = seg.table.get(existing);
+      if (l) {
+        seg.snapshot();
+        l.visible = !l.visible;
+        seg.selected = existing;
+        this.segNote(`${l.name} ${l.visible ? 'shown' : 'hidden'}.`);
+        this.refreshSeg();
+      }
+      return;
+    }
+
+    await this.withBusy('Growing region…', async () => {
+      const data = this.vol.sampled.data;
+      let sum = 0;
+      let c = 0;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const ii = i + dx, jj = j + dy, kk = k + dz;
+            if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+            sum += data[(kk * ny + jj) * nx + ii];
+            c++;
+          }
+        }
+      }
+      const sv = sum / c;
+      const tol = this._state.segTol;
+      let g = regionGrow(seg.dims, data, seg.labels, seed, sv - tol, sv + tol, 8_000_000, existing);
+      if (g.count === 0) throw new Error('Nothing to grow here — raise the tolerance or aim at the structure.');
+      g = openingAroundSeed(g, seg.dims, seed, this._state.segLeak);
+      seg.snapshot();
+      const n = ++this.regionCount;
+      const l = seg.addFromMask(g.mask, `Region ${n}`, {
+        source: 'region',
+        group: 'Regions',
+        visible: !this._state.segAutoHide,
+        steal: existing,
+      });
+      if (!l) throw new Error('The region vanished after leak control — lower Leak control.');
+      seg.selected = l.id;
+      this.segNote(
+        `${l.name}: ${seg.volumeMl(l).toFixed(0)} mL${l.visible ? '' : ' hidden'}${g.capped ? ' · hit the size limit (lower the tolerance)' : ''}.`,
+      );
+    });
+    this.refreshSeg();
+  }
+
+  /** brush stroke (call repeatedly while the pointer / trigger is down) */
+  segCarveAt(mm: THREE.Vector3) {
+    const seg = this.ensureSeg();
+    if (!this.carving) {
+      seg.snapshot();
+      this.carving = true;
+    }
+    if (!seg.carveSphere(mm.x, mm.y, mm.z, this._state.brushMm)) return;
+    const now = performance.now();
+    window.clearTimeout(this.maskTimer);
+    if (now - this.lastCarveAt > 110) {
+      this.lastCarveAt = now;
+      this.refreshSeg();
+    } else {
+      this.maskTimer = window.setTimeout(() => this.refreshSeg(), 130);
+    }
+  }
+
+  segEndStroke() {
+    if (!this.carving) return;
+    this.carving = false;
+    window.clearTimeout(this.maskTimer);
+    this.refreshSeg();
+  }
+
+  segUndo() {
+    if (this.seg?.undo()) {
+      this.segNote('Undone.');
+      this.refreshSeg();
+    }
+  }
+
+  segShowAll() {
+    if (!this.seg) return;
+    this.seg.snapshot();
+    this.seg.showAll();
+    this.segNote('Everything shown.');
+    this.refreshSeg();
+  }
+
+  segToggle(id: number) {
+    const l = this.seg?.table.get(id);
+    if (!this.seg || !l) return;
+    this.seg.snapshot();
+    l.visible = !l.visible;
+    this.seg.selected = id;
+    this.refreshSeg();
+  }
+
+  segToggleGroup(name: string) {
+    const seg = this.seg;
+    if (!seg) return;
+    const any = seg.list.some((l) => l.group === name && l.visible);
+    seg.snapshot();
+    seg.setGroupVisible(name, !any);
+    this.refreshSeg();
+  }
+
+  segSelect(id: number | null) {
+    if (!this.seg) return;
+    this.seg.selected = this.seg.selected === id ? null : id;
+    this.refreshSeg();
+  }
+
+  segIsolate(id: number) {
+    if (!this.seg) return;
+    this.seg.snapshot();
+    this.seg.isolate(id);
+    this.seg.selected = id;
+    this.refreshSeg();
+  }
+
+  segRemove(id: number) {
+    if (!this.seg) return;
+    this.seg.snapshot();
+    this.seg.remove(id);
+    this.refreshSeg();
+  }
+
+  segRename(id: number, name: string) {
+    const l = this.seg?.table.get(id);
+    if (!l || !name.trim()) return;
+    l.name = name.trim().slice(0, 60);
+    this.refreshSeg();
+  }
+
+  segClear() {
+    if (!this.seg) return;
+    this.seg.snapshot();
+    this.seg.clear();
+    this.segNote('Segmentation cleared.');
+    this.refreshSeg();
+  }
+
+  async segImportFile(file: File, scheme: NameScheme | 'auto' = 'auto') {
+    await this.withBusy('Importing label map…', async () => {
+      const nii = await readNifti(await file.arrayBuffer());
+      const seg = this.ensureSeg();
+      seg.snapshot();
+      seg.clear();
+      const info = importLabels(seg, this.vol, nii, scheme);
+      if (info.ids === 0 || info.coverage < 0.02) {
+        seg.undo();
+        throw new Error('This label map does not overlap the scan (different patient / space?) or contains no labels.');
+      }
+      this.segNote(
+        `Imported ${info.ids} labels · ${info.scheme === 'totalseg' ? 'TotalSegmentator names' : 'generic names'}` +
+          (info.overflow ? ` · ${info.overflow} voxels with id > 254 ignored` : '') +
+          '.',
+      );
+    });
+    this.refreshSeg();
+  }
+
+  async segExport() {
+    const seg = this.seg;
+    if (!seg?.hasLabels) return;
+    await this.withBusy('Writing labels…', async () => {
+      const gz = await writeLabelNifti(seg, this.vol);
+      download(`${this.opts.baseName}-labels.nii.gz`, gz as unknown as BlobPart, 'application/gzip');
+    });
+  }
+
+  private segMeta() {
+    return {
+      version: 1,
+      seriesUid: this.opts.seriesUid ?? null,
+      labels: (this.seg?.list ?? []).map((l) => ({
+        id: l.id, name: l.name, group: l.group, color: l.color, visible: l.visible, source: l.source,
+      })),
+    };
+  }
+
+  /** is there a segmentation stored on the server for this case? */
+  async segCheckServer() {
+    const p = this.opts.persist;
+    if (!p) return;
+    try {
+      this._info.seg = { ...this._info.seg, serverHas: await p.exists() };
+    } catch {
+      this._info.seg = { ...this._info.seg, serverHas: null };
+    }
+    this.rebuildPanel();
+    this.emit();
+  }
+
+  async segSave() {
+    const p = this.opts.persist;
+    const seg = this.seg;
+    if (!p || !seg?.hasLabels) return;
+    await this.withBusy('Saving segmentation to the case…', async () => {
+      const gz = await writeLabelNifti(seg, this.vol);
+      await p.save(gz, this.segMeta());
+      this._info.seg = { ...this._info.seg, serverHas: true };
+      this.segNote('Saved to the case — it loads automatically in any headset.');
+    });
+    this.rebuildPanel();
+  }
+
+  async segLoad(silent = false) {
+    const p = this.opts.persist;
+    if (!p) return;
+    await this.withBusy('Loading saved segmentation…', async () => {
+      const r = await p.load();
+      if (!r) {
+        this._info.seg = { ...this._info.seg, serverHas: false };
+        if (!silent) this.segNote('No saved segmentation for this case yet.');
+        return;
+      }
+      const nii = await readNifti(r.file);
+      const seg = this.ensureSeg();
+      seg.snapshot();
+      seg.clear();
+      importLabels(seg, this.vol, nii, 'generic');
+      type MetaLabel = { id: number; name: string; group: string; color: [number, number, number]; visible: boolean; source: string };
+      const meta = r.meta as { labels?: MetaLabel[] } | null;
+      for (const m of meta?.labels ?? []) {
+        if (seg.table.has(m.id) || m.id === CARVE_ID) {
+          seg.define(m.id, { name: m.name, group: m.group, color: m.color, visible: m.visible, source: m.source as 'auto' });
+        }
+      }
+      seg.recount();
+      this._info.seg = { ...this._info.seg, serverHas: true };
+      this.segNote(`Loaded ${seg.table.size} saved segments.`);
+    });
+    this.refreshSeg();
+  }
+
+  async segDeleteSaved() {
+    const p = this.opts.persist;
+    if (!p) return;
+    await this.withBusy('Deleting saved segmentation…', async () => {
+      await p.remove();
+      this._info.seg = { ...this._info.seg, serverHas: false };
+      this.segNote('Saved segmentation deleted from the case.');
+    });
+    this.rebuildPanel();
+  }
+
+  /** call once after construction: look for a saved segmentation and load it */
+  async segInit() {
+    await this.segCheckServer();
+    if (this._info.seg.serverHas) await this.segLoad(true);
   }
 
   // =========================================================================
@@ -517,23 +1035,38 @@ export class VRScene {
 
   private setupMouse() {
     const el = this.renderer.domElement;
-    el.addEventListener('pointermove', (e) => {
+    const track = (e: PointerEvent) => {
       const r = el.getBoundingClientRect();
       this.mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1;
       this.mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+    };
+    el.addEventListener('pointermove', (e) => {
+      track(e);
       this.mouse.moved = true;
     });
     el.addEventListener('pointerdown', (e) => {
+      track(e);
       this.mouse.down = true;
       this.mouse.sx = e.clientX;
       this.mouse.sy = e.clientY;
+      if (e.button === 0 && this._state.segTool === 'carve' && !this.renderer.xr.isPresenting) {
+        el.setPointerCapture?.(e.pointerId);
+        const hit = this.pickFromMouse();
+        if (hit) this.segCarveAt(hit.mm);
+      }
     });
     el.addEventListener('pointerup', (e) => {
+      track(e);
       const click = this.mouse.down && Math.hypot(e.clientX - this.mouse.sx, e.clientY - this.mouse.sy) < 5;
       this.mouse.down = false;
-      if (click && e.button === 0 && this._state.measure && !this.renderer.xr.isPresenting) {
+      if (this._state.segTool === 'carve') this.segEndStroke();
+      if (!click || e.button !== 0 || this.renderer.xr.isPresenting) return;
+      if (this._state.measure) {
         const hit = this.pickFromMouse();
         if (hit) this.addMeasurePoint(hit.mm);
+      } else if (this._state.segTool === 'hide' || this._state.segTool === 'grow') {
+        const hit = this.pickFromMouse();
+        if (hit) void this.segActAt(hit.mm, this._state.segTool);
       }
     });
     el.addEventListener('pointerleave', () => {
@@ -625,6 +1158,10 @@ export class VRScene {
         const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
         const v = sampleMm(this.vol, x, y, z);
         if (v == null) continue;
+        if (this.seg && this.segHiddenAt(x, y, z)) {
+          prevV = null; // hidden segment: look through it
+          continue;
+        }
         let hit = false;
         if (s.mode === 'surface') hit = v >= s.iso;
         else if (s.mip) hit = ((v - this.vol.lo) / span - winMin) * winInv > 0.35;
@@ -645,7 +1182,9 @@ export class VRScene {
     if (tSlice !== Infinity) {
       const mm = new THREE.Vector3(o.x + d.x * tSlice, o.y + d.y * tSlice, o.z + d.z * tSlice);
       const value = sampleMm(this.vol, mm.x, mm.y, mm.z);
-      if (value != null) return { mm, value, distance: this.worldDistance(o, mm, originW) };
+      if (value != null && !(this.seg && this.segHiddenAt(mm.x, mm.y, mm.z))) {
+        return { mm, value, distance: this.worldDistance(o, mm, originW) };
+      }
     }
     return null;
   }
@@ -1089,12 +1628,23 @@ export class VRScene {
       probe = pk;
       if (pk) rayLen = Math.min(3, pk.distance);
       const rising = slot.selecting && !this.prevPointerSelect;
-      if (rising && pk && this._state.measure && !this.panel.dragging) {
-        this.addMeasurePoint(pk.mm);
-        this.haptic(slot);
+      const st = this._state;
+      if (rising && pk && !this.panel.dragging) {
+        if (st.measure) {
+          this.addMeasurePoint(pk.mm);
+          this.haptic(slot);
+        } else if (st.segTool === 'hide' || st.segTool === 'grow') {
+          void this.segActAt(pk.mm, st.segTool);
+          this.haptic(slot);
+        }
+      }
+      if (st.segTool === 'carve' && slot.selecting && pk) {
+        this.segCarveAt(pk.mm);
+        if (rising) this.haptic(slot);
       }
     }
     this.setProbe(probe);
+    if (this.carving && !slot.selecting) this.segEndStroke();
     this.prevPointerSelect = slot.selecting;
     slot.ray.scale.z = Math.max(0.05, rayLen);
 
@@ -1178,6 +1728,17 @@ export class VRScene {
     p.begin();
     p.title(this.opts.title, this._info.busy ?? 'RadBridge VR');
 
+    p.tabs([
+      { label: 'View', active: s.panelTab === 'view', onClick: () => this.setState({ panelTab: 'view' }) },
+      { label: this._info.seg.hasHidden ? 'Segment ●' : 'Segment', active: s.panelTab === 'segment', onClick: () => this.setState({ panelTab: 'segment' }) },
+    ]);
+    if (s.panelTab === 'segment') this.buildSegmentPanel(p);
+    else this.buildViewPanel(p, u, lo, hi);
+    p.end();
+  }
+
+  private buildViewPanel(p: VRPanel, u: string, lo: number, hi: number) {
+    const s = this._state;
     p.column(0);
     p.header('Display');
     p.slider('Window', s.width, 1, hi - lo, (v) => `${Math.round(v)} ${u}`, (v) => this.patch({ width: v }));
@@ -1229,7 +1790,75 @@ export class VRScene {
       ],
       2,
     );
-    p.end();
+  }
+
+  private buildSegmentPanel(p: VRPanel) {
+    const s = this._state;
+    const si = this._info.seg;
+    const tolMax = this.vol.isCT ? 400 : Math.max(2, (this.vol.p99 - this.vol.p2) * 0.6);
+
+    p.column(0);
+    p.header('Tool');
+    p.buttons([
+      { label: 'Off', active: s.segTool === 'off', onClick: () => this.setState({ segTool: 'off' }) },
+      { label: 'Hide', active: s.segTool === 'hide', onClick: () => this.setState({ segTool: 'hide' }) },
+      { label: 'Grow', active: s.segTool === 'grow', onClick: () => this.setState({ segTool: 'grow' }) },
+      { label: 'Carve', active: s.segTool === 'carve', onClick: () => this.setState({ segTool: 'carve' }) },
+    ]);
+    p.slider('Tolerance', s.segTol, 1, tolMax, (v) => `± ${Math.round(v)} ${this.unitLabel}`, (v) => this.patch({ segTol: v }));
+    p.slider('Leak control', s.segLeak, 0, 3, (v) => `${Math.round(v)}`, (v) => this.patch({ segLeak: Math.round(v) }));
+    p.slider('Brush', s.brushMm, 2, Math.max(10, this.maxExtentMm * 0.15), (v) => `${Math.round(v)} mm`, (v) => this.patch({ brushMm: v }));
+    p.buttons(
+      [
+        { label: 'Auto-segment', onClick: () => void this.segAuto() },
+        { label: 'Undo', disabled: !si.canUndo, onClick: () => this.segUndo() },
+        { label: 'Show all', disabled: !si.hasHidden, onClick: () => this.segShowAll() },
+        { label: s.segMargin ? 'Soft edge: on' : 'Soft edge: off', active: s.segMargin, onClick: () => this.setState({ segMargin: !s.segMargin }) },
+        { label: 'Save to case', disabled: !this.opts.persist || !si.labels.length, onClick: () => void this.segSave() },
+        { label: 'Load saved', disabled: !this.opts.persist || si.serverHas === false, onClick: () => void this.segLoad() },
+      ],
+      2,
+    );
+    const tip =
+      s.segTool === 'hide' ? 'Point at a structure + trigger: hides it (again = show).'
+      : s.segTool === 'grow' ? 'Point + trigger: grows a region from there.'
+      : s.segTool === 'carve' ? 'Hold trigger and sweep: cuts the scan away.'
+      : 'Pick a tool, then point at the scan.';
+    p.note(tip, '#8ea0bd', 23);
+    p.note(si.note ?? (si.labels.length ? `${si.labels.length} segments` : 'No segments yet - Auto-segment or Hide.'), si.note ? '#2dd4bf' : '#8ea0bd', 23);
+
+    // right column: groups / labels with visibility toggles
+    p.column(1);
+    p.header(s.segListMode === 'groups' ? 'Segments (groups)' : 'Segments');
+    const useGroups = s.segListMode === 'groups' && si.groups.length > 0;
+    const items = useGroups
+      ? si.groups.map((g) => ({
+          label: `${g.shown > 0 ? '●' : '○'} ${g.name}${g.total > 1 ? ` (${g.total})` : ''}`,
+          active: g.shown > 0,
+          onClick: () => this.segToggleGroup(g.name),
+        }))
+      : si.labels.map((l) => ({
+          label: `${l.visible ? '●' : '○'} ${l.name}`,
+          active: l.visible,
+          onClick: () => this.segToggle(l.id),
+        }));
+    const perPage = 10;
+    const pages = Math.max(1, Math.ceil(items.length / perPage));
+    const page = Math.min(s.segPage, pages - 1);
+    if (!items.length) p.note('Nothing yet.', '#8ea0bd', 24);
+    p.buttons(items.slice(page * perPage, page * perPage + perPage), 2);
+    p.buttons(
+      [
+        { label: '◀', disabled: page === 0, onClick: () => this.setState({ segPage: Math.max(0, page - 1) }) },
+        { label: `${page + 1} / ${pages}`, disabled: true, onClick: () => undefined },
+        { label: '▶', disabled: page >= pages - 1, onClick: () => this.setState({ segPage: page + 1 }) },
+      ],
+      3,
+    );
+    p.buttons([
+      { label: s.segListMode === 'groups' ? 'Show labels' : 'Show groups', onClick: () => this.setState({ segListMode: s.segListMode === 'groups' ? 'labels' : 'groups', segPage: 0 }) },
+      { label: 'Clear all', disabled: !si.labels.length, onClick: () => this.segClear() },
+    ]);
   }
 
   /** slider drags update state without re-laying-out the panel mid-drag */
@@ -1282,12 +1911,19 @@ export class VRScene {
       this.updatePointer();
     } else {
       this.controls.update();
-      if (this.mouse.moved && !this.mouse.down) {
+      if (this.mouse.moved) {
         this.mouse.moved = false;
-        const hit = this.pickFromMouse();
-        const before = this._info.probe?.value;
-        this.setProbe(hit);
-        if (before !== this._info.probe?.value) this.emit();
+        if (this.mouse.down) {
+          if (this._state.segTool === 'carve') {
+            const hit = this.pickFromMouse();
+            if (hit) this.segCarveAt(hit.mm);
+          }
+        } else {
+          const hit = this.pickFromMouse();
+          const before = this._info.probe?.value;
+          this.setProbe(hit);
+          if (before !== this._info.probe?.value) this.emit();
+        }
       }
     }
     this.updateSurfaceClip();
@@ -1304,6 +1940,8 @@ export class VRScene {
     this.clearMeasurements();
     this.panel.dispose();
     this.tex.dispose();
+    this.maskTex.dispose();
+    window.clearTimeout(this.maskTimer);
     this.lut.dispose();
     this.material.dispose();
     this.volumeMesh.geometry.dispose();
