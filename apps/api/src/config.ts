@@ -5,7 +5,7 @@ export const config = {
   /** Empty when there is no Orthanc (hosted deploy) — the API runs local mode. */
   orthancUrl: rawOrthanc,
   orthancEnabled: rawOrthanc.length > 0,
-  orthancUser: process.env.ORTHANC_USERNAME ?? 'radbridge',
+  orthancUser: process.env.ORTHANC_USERNAME ?? 'wescan',
   orthancPass: process.env.ORTHANC_PASSWORD ?? 'change-me-orthanc',
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
 };

@@ -197,7 +197,7 @@ export async function writeLabelNifti(seg: Segmentation, prep: PreparedVolume): 
   dv.setFloat32(108, 352, le);
   dv.setFloat32(112, 1, le);
   dv.setUint8(123, 2);
-  const desc = 'RadBridge labels';
+  const desc = 'WeScan labels';
   for (let i = 0; i < desc.length; i++) dv.setUint8(148 + i, desc.charCodeAt(i));
   dv.setInt16(254, 1, le);
 

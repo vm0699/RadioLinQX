@@ -30,7 +30,7 @@ export function ViewportOverlay({
   useEffect(() => {
     const { eventTarget, Enums, getRenderingEngine } = cornerstone;
     const handler = () => {
-      const re = getRenderingEngine('RADBRIDGE_ENGINE');
+      const re = getRenderingEngine('WESCAN_ENGINE');
       const vp = re?.getViewport(viewportId) as
         | cornerstone.Types.IStackViewport
         | undefined;

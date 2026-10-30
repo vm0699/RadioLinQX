@@ -1,8 +1,8 @@
 {
-  "name": "@radbridge/api",
+  "name": "@wescan/api",
   "version": "0.1.0",
   "private": true,
-  "description": "Thin DICOMweb proxy + app API for RadBridge",
+  "description": "Thin DICOMweb proxy + app API for WeScan",
   "scripts": {
     "build": "nest build",
     "start": "node dist/main.js",

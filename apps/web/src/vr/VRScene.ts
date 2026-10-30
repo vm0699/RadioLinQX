@@ -1820,7 +1820,7 @@ export class VRScene {
     const u = this.unitLabel;
     const { lo, hi } = this.range;
     p.begin();
-    p.title(this.opts.title, this._info.busy ?? 'RadBridge VR');
+    p.title(this.opts.title, this._info.busy ?? 'WeScan VR');
 
     if (this.isStack) {
       this.buildStackPanel(p, u, lo, hi);

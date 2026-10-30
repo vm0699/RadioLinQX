@@ -1,4 +1,4 @@
-# Running & testing RadBridge
+# Running & testing WeScan
 
 Two ways to run. **Local mode needs no Docker** and is the fastest way to see
 everything working today.

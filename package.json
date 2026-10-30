@@ -1,7 +1,7 @@
 {
-  "name": "radbridge-root",
+  "name": "wescan-root",
   "private": true,
-  "description": "RadBridge Monorepo Root",
+  "description": "WeScan Monorepo Root",
   "scripts": {
     "word-sync": "node scripts/word-agent.js",
     "word-agent": "node scripts/word-agent.js"

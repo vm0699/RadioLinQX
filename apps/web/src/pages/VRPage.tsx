@@ -172,7 +172,7 @@ function VRInner() {
   return (
     <div className="viewer-shell vr-shell">
       <div className="viewer-topbar">
-        <span className="brand"><span className="brand-dot" />RadBridge</span>
+        <span className="brand"><span className="brand-dot" />WeScan</span>
         <Button size="small" onClick={back}>← Back</Button>
         <span className="vr-title">{title || 'VR / 3D'}</span>
         {seriesList.length > 1 && (
@@ -317,7 +317,7 @@ function Controls({ scene }: { scene: VRScene }) {
     if (!url) return;
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'radbridge-3d.png';
+    a.download = 'wescan-3d.png';
     a.click();
   };
 
@@ -627,7 +627,7 @@ function StackControls({ scene }: { scene: VRScene }) {
     if (!url) return;
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'radbridge-2d.png';
+    a.download = 'wescan-2d.png';
     a.click();
   };
   return (

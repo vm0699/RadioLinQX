@@ -22,7 +22,7 @@ export interface WordSession {
 export class WordSyncService {
   private readonly log = new Logger(WordSyncService.name);
   private sessions = new Map<string, WordSession>();
-  private readonly workDir = path.join(os.tmpdir(), 'RadBridge-Reports');
+  private readonly workDir = path.join(os.tmpdir(), 'WeScan-Reports');
 
   constructor(
     private readonly cases: CasesService,
@@ -51,6 +51,17 @@ export class WordSyncService {
   async openInWord(caseId: string) {
     const c = await this.cases.get(caseId);
     if (!c) throw new NotFoundException(`Case ${caseId} not found`);
+
+    // Launching a desktop app from the *server* only makes sense when the API runs on
+    // the doctor's own PC. On a hosted server (Render…) there is no desktop and an
+    // unhandled spawn error would take the process down — so it is opt-in.
+    if (process.env.ENABLE_SERVER_WORD_LAUNCH !== '1') {
+      return {
+        ok: false,
+        message:
+          'Server-side Word launch is disabled. Use "Open in Word" (local Word Sync Agent) or download the .docx.',
+      };
+    }
 
     const appSettings = await this.settings.get();
     const docxBuf = await buildReportDocx(c, appSettings);
@@ -96,14 +107,17 @@ export class WordSyncService {
     try {
       if (process.platform === 'win32') {
         // cmd.exe /c start "" "filepath" opens the file with the default associated app (winword.exe)
-        spawn('cmd.exe', ['/c', 'start', '""', filePath], {
-          detached: true,
-          stdio: 'ignore',
-        }).unref();
+        const child = spawn('cmd.exe', ['/c', 'start', '""', filePath], { detached: true, stdio: 'ignore' });
+        child.on('error', (e) => this.log.error(`Failed to launch Word: ${e.message}`));
+        child.unref();
       } else if (process.platform === 'darwin') {
-        spawn('open', [filePath], { detached: true, stdio: 'ignore' }).unref();
+        const child = spawn('open', [filePath], { detached: true, stdio: 'ignore' });
+        child.on('error', (e) => this.log.error(`Failed to launch Word: ${e.message}`));
+        child.unref();
       } else {
-        spawn('xdg-open', [filePath], { detached: true, stdio: 'ignore' }).unref();
+        const child = spawn('xdg-open', [filePath], { detached: true, stdio: 'ignore' });
+        child.on('error', (e) => this.log.error(`Failed to launch Word: ${e.message}`));
+        child.unref();
       }
       this.log.log(`Launched Word for file: ${filePath}`);
     } catch (err: any) {

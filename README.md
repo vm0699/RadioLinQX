@@ -1,4 +1,4 @@
-# RadBridge
+# WeScan
 
 A teleradiology platform: a **Cornerstone3D** DICOM viewer (GPU/WebGL volume
 rendering via vtk.js) plus the **case-management dashboard** around it —

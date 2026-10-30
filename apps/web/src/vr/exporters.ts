@@ -138,7 +138,7 @@ export function exportNIfTI(vol: PreparedVolume, baseName: string) {
   dv.setUint8(123, 2); // xyzt_units: mm
   dv.setFloat32(124, mx, le); // cal_max
   dv.setFloat32(128, mn, le); // cal_min
-  const desc = `RadBridge ${f.modality || ''}`.slice(0, 79);
+  const desc = `WeScan ${f.modality || ''}`.slice(0, 79);
   for (let i = 0; i < desc.length; i++) dv.setUint8(148 + i, desc.charCodeAt(i));
   dv.setInt16(252, 0, le); // qform_code
   dv.setInt16(254, 1, le); // sform_code = scanner anat

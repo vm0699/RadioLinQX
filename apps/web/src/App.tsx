@@ -21,7 +21,7 @@ function RouteErrorFallback() {
     >
       <Result
         status="warning"
-        title="RadBridge could not load"
+        title="WeScan could not load"
         subTitle={
           err?.message ||
           (typeof err === 'string'
