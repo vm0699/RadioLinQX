@@ -320,7 +320,7 @@ export function CaseDrawer({
                     onClick={() => saveReport('save')}
                     style={{ background: '#10B981', borderColor: '#10B981', fontWeight: 600 }}
                   >
-                    💾 Save Draft (1-Click / Ctrl+S)
+                    Save draft (Ctrl+S)
                   </Button>
                   <Button
                     type="primary"
@@ -330,7 +330,7 @@ export function CaseDrawer({
                     onClick={() => saveReport('sign')}
                     style={{ background: '#2563EB', fontWeight: 600 }}
                   >
-                    ✍️ Sign &amp; Finalise
+                    Sign &amp; finalise
                   </Button>
                   {c.status === 'REPORTED' && (
                     <Button
@@ -351,7 +351,7 @@ export function CaseDrawer({
                     onClick={() => reportFileInput.current?.click()}
                     style={{ fontWeight: 500 }}
                   >
-                    1-Click Import Word (.docx)
+                    Upload edited .docx
                   </Button>
                   <Button
                     icon={<DownloadOutlined />}
@@ -368,6 +368,20 @@ export function CaseDrawer({
                   >
                     Open in Word
                   </Button>
+                  <Popover
+                    trigger="click"
+                    placement="bottomLeft"
+                    title="Share report on WhatsApp"
+                    content={
+                      <WhatsAppSharePopover
+                        phoneDefault={c.referringDoctorMobile || c.patientMobile}
+                        text={`${c.caseNumber} — ${c.patientName}: radiology report.
+Download: ${api.caseReportDocxUrl(c.id)}`}
+                      />
+                    }
+                  >
+                    <Button icon={<WhatsAppOutlined />}>Share via WhatsApp</Button>
+                  </Popover>
                 </Space>
               </div>
 
@@ -438,68 +452,16 @@ export function CaseDrawer({
                 </div>
               ))}
 
-              <Space wrap style={{ marginBottom: 14 }}>
-                <Button
-                  icon={<FileWordOutlined />}
-                  href={api.caseReportDocxUrl(c.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Download Word (.docx)
-                </Button>
-                <input
-                  ref={reportFileInput}
-                  type="file"
-                  accept=".docx"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) importReportDocx(f);
-                  }}
-                />
-                <Button
-                  icon={<UploadOutlined />}
-                  loading={importingDocx}
-                  onClick={() => reportFileInput.current?.click()}
-                >
-                  Upload edited Word doc
-                </Button>
-                <Popover
-                  trigger="click"
-                  placement="bottomLeft"
-                  title="Share report on WhatsApp"
-                  content={
-                    <WhatsAppSharePopover
-                      phoneDefault={c.referringDoctorMobile || c.patientMobile}
-                      text={`${c.caseNumber} — ${c.patientName}: radiology report.\nDownload: ${api.caseReportDocxUrl(c.id)}`}
-                    />
-                  }
-                >
-                  <Button icon={<WhatsAppOutlined />}>Share via WhatsApp</Button>
-                </Popover>
-              </Space>
-
-              <Space>
-                {c.status === 'REPORTED' ? (
-                  <Button
-                    onClick={async () => {
-                      await api.updateCase(c.id, { status: 'DRAFT', reportedAt: undefined });
-                      refresh();
-                    }}
-                  >
-                    Reopen for editing
-                  </Button>
-                ) : (
-                  <>
-                    <Button loading={saving} onClick={() => saveReport('save')}>
-                      Save draft
-                    </Button>
-                    <Button type="primary" loading={saving} onClick={() => saveReport('sign')}>
-                      Sign &amp; finalise
-                    </Button>
-                  </>
-                )}
-              </Space>
+              <input
+                ref={reportFileInput}
+                type="file"
+                accept=".docx"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) importReportDocx(f);
+                }}
+              />
             </>
           )}
 

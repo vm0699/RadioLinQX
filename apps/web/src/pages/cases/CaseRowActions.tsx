@@ -180,7 +180,9 @@ export function CaseRowActions({
             }
             if (key === 'delete') {
               modal.confirm({
-                title: `Delete ${c.caseNumber}?`,
+                title: `Delete case ${c.caseNumber}?`,
+                content: `${c.patientName} — this removes the case, its report and attachments.`,
+                okText: 'Delete',
                 okType: 'danger',
                 onOk: async () => {
                   await api.deleteCase(c.id);

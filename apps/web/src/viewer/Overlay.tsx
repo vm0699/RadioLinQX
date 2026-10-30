@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import * as cornerstone from '@cornerstonejs/core';
 import { useViewer } from './store';
 import type { LoadedSeries } from './store';
+import { ENGINE_ID } from './renderingManager';
 
 interface Corner {
   dimensions?: string;
@@ -28,9 +29,9 @@ export function ViewportOverlay({
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    const { eventTarget, Enums, getRenderingEngine } = cornerstone;
+    const { Enums, getRenderingEngine } = cornerstone;
     const handler = () => {
-      const re = getRenderingEngine('WESCAN_ENGINE');
+      const re = getRenderingEngine(ENGINE_ID);
       const vp = re?.getViewport(viewportId) as
         | cornerstone.Types.IStackViewport
         | undefined;
@@ -75,15 +76,33 @@ export function ViewportOverlay({
         /* ignore */
       }
     };
-    eventTarget.addEventListener(Enums.Events.IMAGE_RENDERED, handler);
-    eventTarget.addEventListener(Enums.Events.CAMERA_MODIFIED, handler);
-    eventTarget.addEventListener(Enums.Events.VOI_MODIFIED, handler);
-    const t = setTimeout(handler, 300);
+    // Cornerstone fires these on the viewport *element* (not the global event target),
+    // so attach there — retrying until the viewport has been created.
+    const evs = [
+      Enums.Events.IMAGE_RENDERED,
+      Enums.Events.CAMERA_MODIFIED,
+      Enums.Events.VOI_MODIFIED,
+      Enums.Events.STACK_NEW_IMAGE,
+    ];
+    let el: HTMLElement | null = null;
+    const attach = () => {
+      const vp = getRenderingEngine(ENGINE_ID)?.getViewport(viewportId);
+      const found = (vp as { element?: HTMLElement } | undefined)?.element ?? null;
+      if (!found) return false;
+      el = found;
+      evs.forEach((e) => el!.addEventListener(e, handler));
+      handler();
+      return true;
+    };
+    let timer: ReturnType<typeof setInterval> | undefined;
+    if (!attach()) {
+      timer = setInterval(() => {
+        if (attach() && timer) clearInterval(timer);
+      }, 250);
+    }
     return () => {
-      clearTimeout(t);
-      eventTarget.removeEventListener(Enums.Events.IMAGE_RENDERED, handler);
-      eventTarget.removeEventListener(Enums.Events.CAMERA_MODIFIED, handler);
-      eventTarget.removeEventListener(Enums.Events.VOI_MODIFIED, handler);
+      if (timer) clearInterval(timer);
+      if (el) evs.forEach((e) => el!.removeEventListener(e, handler));
     };
   }, [viewportId, series]);
 

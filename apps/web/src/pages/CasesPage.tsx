@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Table, Tabs, Input, Select, DatePicker, Button, Tag, Popover,
+  Table, Tabs, Input, Select, DatePicker, Button, Tag, Popover, Modal,
   App as AntdApp,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -68,6 +68,8 @@ export function CasesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editCase, setEditCase] = useState<CaseView | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [presetName, setPresetName] = useState('');
   const [drawerId, setDrawerId] = useState<string | null>(sp.get('case'));
   const [seriesPickCase, setSeriesPickCase] = useState<CaseView | null>(null);
 
@@ -264,12 +266,9 @@ export function CasesPage() {
         />
         <Button
           size="small"
-          onClick={async () => {
-            const name = window.prompt('Preset name');
-            if (!name) return;
-            const p = await api.createPreset(name, toQuery(filters, tab, 1, perPage));
-            setPresets((x) => [...x, p]);
-            message.success('Preset saved');
+          onClick={() => {
+            setPresetName('');
+            setPresetOpen(true);
           }}
         >
           Save
@@ -355,6 +354,32 @@ export function CasesPage() {
           if (!wasEdit) setDrawerId(c.id);
         }}
       />
+
+      <Modal
+        title="Save filter preset"
+        open={presetOpen}
+        okText="Save"
+        okButtonProps={{ disabled: !presetName.trim() }}
+        onCancel={() => setPresetOpen(false)}
+        onOk={async () => {
+          try {
+            const p = await api.createPreset(presetName.trim(), toQuery(filters, tab, 1, perPage));
+            setPresets((x) => [...x, p]);
+            setPresetOpen(false);
+            message.success('Preset saved');
+          } catch (e) {
+            message.error(String((e as Error).message || e));
+          }
+        }}
+      >
+        <Input
+          autoFocus
+          placeholder="Preset name, e.g. Urgent CT chest"
+          value={presetName}
+          onChange={(e) => setPresetName(e.target.value)}
+          onPressEnter={() => presetName.trim() && document.querySelector<HTMLButtonElement>('.ant-modal-footer .ant-btn-primary')?.click()}
+        />
+      </Modal>
 
       <UploadStudyModal
         open={uploadOpen}

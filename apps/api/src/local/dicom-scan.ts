@@ -58,6 +58,9 @@ function personName(v: string | undefined): string | undefined {
 export async function scanDicomDir(dir: string): Promise<LocalInstance[]> {
   const files = await walk(dir);
   const out: LocalInstance[] = [];
+  // the same SOPInstanceUID can exist in two files (e.g. a study uploaded twice) —
+  // keep one so a series never contains duplicate slices
+  const seenSop = new Set<string>();
 
   for (const filePath of files) {
     let buf: Buffer;
@@ -76,6 +79,8 @@ export async function scanDicomDir(dir: string): Promise<LocalInstance[]> {
       const studyUid = ds.string('x0020000d');
       const seriesUid = ds.string('x0020000e');
       if (!sop || !studyUid || !seriesUid) continue;
+      if (seenSop.has(sop)) continue;
+      seenSop.add(sop);
 
       const ipp = ds.string('x00200032');
       out.push({
