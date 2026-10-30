@@ -488,3 +488,9 @@ a { color: var(--primary); }
 .seg-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .seg-ml { font-size: 11px; white-space: nowrap; }
 .vr-controls .ant-collapse-content-box { padding: 6px 8px !important; }
+
+.vr-framebadge {
+  position: absolute; top: 14px; right: 14px; padding: 4px 10px; border-radius: 999px;
+  background: rgba(8, 14, 28, .82); border: 1px solid var(--border-strong); font-size: 12px; color: var(--text);
+  pointer-events: none;
+}

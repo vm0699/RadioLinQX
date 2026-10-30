@@ -69,10 +69,10 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
   const in3dOrMpr = st.mpr || st.vrt;
   const vrSeriesUid = st.assignments[st.activeViewportIndex] ?? st.series[0]?.seriesInstanceUid;
   const vrSeries = st.series.find((x) => x.seriesInstanceUid === vrSeriesUid);
-  const canVR =
-    !!st.studyInstanceUid &&
+  const canVolume =
     !!vrSeries &&
     isVolumetric({ modality: vrSeries.modality, instanceCount: vrSeries.imageIds?.length ?? vrSeries.instanceCount });
+  const canVR = !!st.studyInstanceUid && !!vrSeries;
   const openVR = () =>
     st.studyInstanceUid && vrSeriesUid &&
     navigate(vrUrl(sp.get('case') ?? undefined, st.studyInstanceUid, vrSeriesUid));
@@ -160,15 +160,21 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
 
         <span className="tb-sep" />
 
-        <TB label="VRT" active={st.vrt} disabled={!hasSeries} onClick={toggleVrt} />
-        <TB label="MPR" active={st.mpr} disabled={!hasSeries} onClick={toggleMpr} />
+        <Tooltip title={canVolume ? '3D volume rendering' : '3D (VRT) needs a multi-slice CT / MR / PET series'}>
+          <span><TB label="VRT" active={st.vrt} disabled={!hasSeries || !canVolume} onClick={toggleVrt} /></span>
+        </Tooltip>
+        <Tooltip title={canVolume ? 'Multi-planar reconstruction' : 'MPR needs a multi-slice CT / MR / PET series'}>
+          <span><TB label="MPR" active={st.mpr} disabled={!hasSeries || !canVolume} onClick={toggleMpr} /></span>
+        </Tooltip>
         <Tooltip
           title={
             !canVR
-              ? 'VR / 3D needs a multi-slice CT, MR or PET series'
-              : xr.vr
-                ? 'VR headset detected — open this series in immersive VR'
-                : 'Open in the VR / 3D viewer (works on desktop; headsets add immersive mode)'
+              ? 'Open a series first'
+              : !canVolume
+                ? 'Open in VR as a virtual screen (scroll / cine / window-level) — this series is 2D'
+                : xr.vr
+                  ? 'VR headset detected — open this series in immersive VR'
+                  : 'Open in the VR / 3D viewer (works on desktop; headsets add immersive mode)'
           }
         >
           <span><TB label="VR" badge={xr.vr ? '●' : undefined} active={xr.vr && canVR} disabled={!canVR} onClick={openVR} /></span>

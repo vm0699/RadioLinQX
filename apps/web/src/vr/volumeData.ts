@@ -26,6 +26,12 @@ export interface FullVolume {
   modality: string;
   invert: boolean;
   seriesDescription?: string;
+  /** 'stack' = 2D images / cine shown as a virtual screen (not a real volume) */
+  kind: 'volume' | 'stack';
+  /** stack only: number of real frames (the volume may be padded to 2 layers) */
+  frames: number;
+  /** false when the series has no pixel spacing (units are then pixels) */
+  calibrated: boolean;
 }
 
 export interface SampledVolume {
@@ -71,22 +77,132 @@ const inflight = new Map<string, { promise: Promise<FullVolume>; listeners: Set<
  * One load per series at a time (React StrictMode / double navigation must not
  * create two competing Cornerstone volumes for the same id).
  */
+export interface LoadOptions {
+  /** treat the series as 2D frames (virtual screen) instead of a 3D volume */
+  stack?: boolean;
+  modality?: string;
+}
+
 export function loadFullVolume(
   studyUid: string,
   seriesUid: string,
   onProgress?: Progress,
+  opts: LoadOptions = {},
 ): Promise<FullVolume> {
-  const key = `${studyUid}/${seriesUid}`;
+  const key = `${studyUid}/${seriesUid}/${opts.stack ? 'stack' : 'vol'}`;
   let entry = inflight.get(key);
   if (!entry) {
     const listeners = new Set<Progress>();
     const emit: Progress = (f, l) => listeners.forEach((fn) => fn(f, l));
-    const promise = loadFullVolumeOnce(studyUid, seriesUid, emit).finally(() => inflight.delete(key));
+    const run = opts.stack
+      ? loadStackOnce(studyUid, seriesUid, emit, opts.modality ?? '')
+      : loadFullVolumeOnce(studyUid, seriesUid, emit);
+    const promise = run.finally(() => inflight.delete(key));
     entry = { promise, listeners };
     inflight.set(key, entry);
   }
   if (onProgress) entry.listeners.add(onProgress);
   return entry.promise;
+}
+
+/**
+ * 2D series (XA cine, ultrasound, X-ray, any non-volumetric stack) → a very thin
+ * "volume" whose slice plane is the image, so the VR viewer can show it as a
+ * virtual screen with scrolling / cine / window-level.
+ */
+async function loadStackOnce(
+  studyUid: string,
+  seriesUid: string,
+  onProgress: Progress | undefined,
+  modality: string,
+): Promise<FullVolume> {
+  await initCornerstone();
+  const mode = await api.getMode();
+  onProgress?.(0.02, 'Listing images…');
+  const { imageIds } = await loadSeriesImageIds(mode, studyUid, seriesUid);
+  if (!imageIds.length) throw new Error('This series has no images.');
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const first: any = await cornerstone.imageLoader.loadAndCacheImage(imageIds[0]);
+  const cols: number = first.columns;
+  const rows: number = first.rows;
+  const nImg = imageIds.length;
+  const nz = Math.max(2, nImg);
+  let step = 1;
+  while ((cols / step) * (rows / step) * nz > 60_000_000) step++;
+  const ox = Math.ceil(cols / step);
+  const oy = Math.ceil(rows / step);
+  const data = new Float32Array(ox * oy * nz);
+
+  const psx = Number(first.columnPixelSpacing);
+  const psy = Number(first.rowPixelSpacing);
+  const calibrated = psx > 0 && psy > 0 && Number.isFinite(psx) && Number.isFinite(psy);
+  const spx = calibrated ? psx : 1;
+  const spy = calibrated ? psy : 1;
+
+  let next = 0;
+  let done = 0;
+  const loadOne = async (k: number) => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const img: any = k === 0 ? first : await cornerstone.imageLoader.loadAndCacheImage(imageIds[k]);
+        const pd: ArrayLike<number> = img.getPixelData();
+        const px = cols * rows;
+        const comps = Math.max(1, Math.round(pd.length / px));
+        const slope = typeof img.slope === 'number' ? img.slope : 1;
+        const icpt = typeof img.intercept === 'number' ? img.intercept : 0;
+        const base = k * ox * oy;
+        for (let y = 0; y < oy; y++) {
+          for (let x = 0; x < ox; x++) {
+            const p = (y * step) * cols + x * step;
+            let v: number;
+            if (comps >= 3) {
+              const q = p * comps;
+              v = 0.299 * pd[q] + 0.587 * pd[q + 1] + 0.114 * pd[q + 2]; // colour → luminance
+            } else {
+              v = pd[p] * slope + icpt;
+            }
+            data[base + y * ox + x] = v;
+          }
+        }
+        return;
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      }
+    }
+    throw new Error(`Frame ${k + 1}/${nImg} failed to load: ${(lastErr as Error)?.message ?? lastErr}`);
+  };
+  const worker = async () => {
+    while (next < nImg) {
+      const k = next++;
+      await loadOne(k);
+      done++;
+      onProgress?.(0.05 + 0.6 * (done / nImg), `Downloading ${done}/${nImg} frames…`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, nImg) }, worker));
+  if (nImg === 1) data.copyWithin(ox * oy, 0, ox * oy); // pad the single image to 2 identical layers
+
+  // thin slab: image plane = (i,j); frames stacked along k (kept ~0.5 % of the width thick)
+  const width = ox * spx * step;
+  const zsp = Math.max(1e-4, (0.005 * width) / nz);
+  return {
+    dims: [ox, oy, nz],
+    spacing: [spx * step, spy * step, zsp],
+    // i → patient-left (screen right), j → down, k → towards the viewer
+    direction: [1, 0, 0, 0, 0, -1, 0, 1, 0],
+    origin: [0, 0, 0],
+    data,
+    modality: (modality || String(first.metadata?.Modality ?? '')).toUpperCase(),
+    invert: !!first.invert,
+    seriesDescription: undefined,
+    kind: 'stack',
+    frames: nImg,
+    calibrated,
+  };
 }
 
 async function loadFullVolumeOnce(
@@ -174,6 +290,9 @@ async function loadFullVolumeOnce(
     modality: String(meta.Modality ?? '').toUpperCase(),
     invert: invert || String(meta.PhotometricInterpretation ?? '') === 'MONOCHROME1',
     seriesDescription: meta.SeriesDescription,
+    kind: 'volume',
+    frames: nz,
+    calibrated: true,
   };
 }
 

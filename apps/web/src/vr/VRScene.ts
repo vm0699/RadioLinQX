@@ -83,6 +83,11 @@ export interface VRState {
   segMargin: boolean;
   segListMode: 'groups' | 'labels';
   segPage: number;
+  /** 2D stack (virtual screen) */
+  frame: number;
+  playing: boolean;
+  fps: number;
+  invert: boolean;
 }
 
 export interface SegLabelView {
@@ -198,6 +203,12 @@ export class VRScene {
   private lastCarveAt = 0;
   private maskTimer: number | undefined;
 
+  /** true for 2D series shown as a virtual screen */
+  readonly isStack: boolean;
+  private cineAcc = 0;
+  private frameAcc = 0;
+  private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+
   private model = new THREE.Group();
   private mmSpace = new THREE.Group();
   private measureGroup = new THREE.Group();
@@ -241,6 +252,7 @@ export class VRScene {
     this.host = host;
     this.vol = vol;
     this.opts = opts;
+    this.isStack = vol.full.kind === 'stack';
 
     // ---- renderer ---------------------------------------------------------
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -299,7 +311,7 @@ export class VRScene {
     this.mmSpace.add(this.measureGroup);
 
     this.model.add(this.mmSpace);
-    const fit = 0.55 / (this.maxExtentMm * 0.001);
+    const fit = (this.isStack ? 0.85 : 0.55) / (this.maxExtentMm * 0.001);
     this.homeScale = fit;
     this.model.scale.setScalar(fit);
     this.scene.add(this.model);
@@ -362,7 +374,14 @@ export class VRScene {
       segMargin: true,
       segListMode: 'groups',
       segPage: 0,
+      frame: 0,
+      playing: false,
+      fps: 12,
+      invert: false,
     };
+    if (this.isStack) {
+      this._state = { ...this._state, mode: 'slice', sliceAxis: 2, showSlice: true, lighting: false, quality: 'low' };
+    }
     this._info = {
       busy: null,
       surface: null,
@@ -378,7 +397,7 @@ export class VRScene {
     this.snap = { state: this._state, info: this._info, v: 0 };
 
     // ---- desktop camera / controls ----------------------------------------
-    this.camera.position.set(0.35, 0.2, 1.05);
+    this.camera.position.set(...this.homeCam());
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -389,6 +408,35 @@ export class VRScene {
 
     this.setupXRInput();
     this.setupMouse();
+    if (this.isStack) {
+      this.keyHandler = (e: KeyboardEvent) => {
+        const t = e.target as HTMLElement | null;
+        if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') this.stepFrame(1);
+        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') this.stepFrame(-1);
+        else if (e.key === ' ') {
+          e.preventDefault();
+          this.togglePlay();
+        }
+      };
+      window.addEventListener('keydown', this.keyHandler);
+      // mouse wheel scrolls frames (Ctrl+wheel zooms)
+      this.renderer.domElement.addEventListener(
+        'wheel',
+        (e) => {
+          if (e.ctrlKey || this.renderer.xr.isPresenting) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.frameAcc += e.deltaY / 100;
+          const n = Math.trunc(this.frameAcc);
+          if (n) {
+            this.frameAcc -= n;
+            this.stepFrame(n);
+          }
+        },
+        { passive: false, capture: true },
+      );
+    }
 
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(host);
@@ -429,6 +477,32 @@ export class VRScene {
   }
   get unitLabel(): string {
     return this.vol.isCT ? 'HU' : 'val';
+  }
+  /** unit of distances (pixels when the series has no pixel spacing) */
+  get lenUnit(): string {
+    return this.vol.full.calibrated ? 'mm' : 'px';
+  }
+  get frameCount(): number {
+    return Math.max(1, this.vol.full.frames);
+  }
+
+  setFrame(f: number) {
+    if (!this.isStack) return;
+    const n = this.frameCount;
+    const frame = ((Math.round(f) % n) + n) % n;
+    if (frame === this._state.frame) return;
+    this._state = { ...this._state, frame };
+    this.applyAll();
+    this.emit();
+  }
+
+  stepFrame(d: number) {
+    this.setFrame(this._state.frame + d);
+  }
+
+  togglePlay() {
+    if (!this.isStack || this.frameCount < 2) return;
+    this.setState({ playing: !this._state.playing });
   }
 
   private emit() {
@@ -498,6 +572,7 @@ export class VRScene {
     u.uDensity.value = s.mode === 'slice' ? 0 : s.density;
     u.uMip.value = s.mip && s.mode === 'volume' ? 1 : 0;
     u.uLighting.value = s.lighting ? 1 : 0;
+    u.uInvert.value = s.invert ? 1 : 0;
     const sp = this.vol.sampled.spacing;
     u.uStepMm.value = Math.min(sp[0], sp[1], sp[2]) * STEP_FACTOR[s.quality];
 
@@ -510,6 +585,11 @@ export class VRScene {
     u.uSliceOn.value = sliceActive ? 1 : 0;
     u.uSlicePos.value = s.slicePos;
     u.uSliceMask.value.copy(mask(s.sliceAxis));
+
+    if (this.isStack) {
+      const frames = Math.max(1, this.vol.full.frames);
+      u.uSlicePos.value = (Math.min(frames - 1, Math.max(0, s.frame)) + 0.5) / Math.max(2, this.vol.full.dims[2]);
+    }
 
     this.volumeMesh.visible = s.mode !== 'surface';
     this.surfaceMesh.visible = s.mode === 'surface' && !!this._info.surface;
@@ -1268,7 +1348,7 @@ export class VRScene {
       seg.scale.y = len;
       seg.renderOrder = 31;
       g.add(seg);
-      const label = this.makeLabel(`${len.toFixed(1)} mm`);
+      const label = this.makeLabel(`${len.toFixed(1)} ${this.lenUnit}`);
       label.position.copy(a).add(b).multiplyScalar(0.5);
       label.position.y += this.maxExtentMm * 0.04;
       g.add(label);
@@ -1308,6 +1388,10 @@ export class VRScene {
   // view
   // =========================================================================
 
+  private homeCam(): [number, number, number] {
+    return this.isStack ? [0, 0, 1.25] : [0.35, 0.2, 1.05];
+  }
+
   resetView() {
     if (this.renderer.xr.isPresenting) {
       this.model.position.copy(this.homePos);
@@ -1317,7 +1401,7 @@ export class VRScene {
       this.model.position.set(0, 0, 0);
       this.model.quaternion.identity();
       this.model.scale.setScalar(this.homeScale);
-      this.camera.position.set(0.35, 0.2, 1.05);
+      this.camera.position.set(...this.homeCam());
       this.controls.target.set(0, 0, 0);
       this.controls.update();
     }
@@ -1351,7 +1435,7 @@ export class VRScene {
 
     this.scene.background = kind === 'vr' ? new THREE.Color(0x05070d) : null;
     this.floor.visible = kind === 'vr' && floor;
-    this.homePos.set(0, floor ? 1.25 : 0, -0.8);
+    this.homePos.set(0, floor ? 1.25 : 0, this.isStack ? -1.1 : -0.8);
     this.homeQuat.identity();
     this.model.position.copy(this.homePos);
     this.model.quaternion.copy(this.homeQuat);
@@ -1673,7 +1757,17 @@ export class VRScene {
       const sx = dz(ax.length >= 4 ? ax[2] : ax[0] ?? 0);
       const sy = dz(ax.length >= 4 ? ax[3] : ax[1] ?? 0);
       const s = this._state;
-      if (src.handedness === 'left') {
+      if (src.handedness === 'left' && this.isStack) {
+        if (sy) {
+          this.frameAcc += sy * dt * 18;
+          const n = Math.trunc(this.frameAcc);
+          if (n) {
+            this.frameAcc -= n;
+            this.stepFrame(n);
+            changed = true;
+          }
+        }
+      } else if (src.handedness === 'left') {
         if (sy) {
           const k = THREE.MathUtils.clamp((s.mode === 'slice' || s.showSlice ? s.slicePos : s.clipPos) - sy * dt * 0.35, 0, 1);
           if (s.mode === 'slice' || s.showSlice) this._state = { ...s, slicePos: k };
@@ -1728,12 +1822,16 @@ export class VRScene {
     p.begin();
     p.title(this.opts.title, this._info.busy ?? 'RadBridge VR');
 
-    p.tabs([
-      { label: 'View', active: s.panelTab === 'view', onClick: () => this.setState({ panelTab: 'view' }) },
-      { label: this._info.seg.hasHidden ? 'Segment ●' : 'Segment', active: s.panelTab === 'segment', onClick: () => this.setState({ panelTab: 'segment' }) },
-    ]);
-    if (s.panelTab === 'segment') this.buildSegmentPanel(p);
-    else this.buildViewPanel(p, u, lo, hi);
+    if (this.isStack) {
+      this.buildStackPanel(p, u, lo, hi);
+    } else {
+      p.tabs([
+        { label: 'View', active: s.panelTab === 'view', onClick: () => this.setState({ panelTab: 'view' }) },
+        { label: this._info.seg.hasHidden ? 'Segment ●' : 'Segment', active: s.panelTab === 'segment', onClick: () => this.setState({ panelTab: 'segment' }) },
+      ]);
+      if (s.panelTab === 'segment') this.buildSegmentPanel(p);
+      else this.buildViewPanel(p, u, lo, hi);
+    }
     p.end();
   }
 
@@ -1748,9 +1846,9 @@ export class VRScene {
     p.slider(`Slice ${AXIS_SHORT[s.sliceAxis]}`, s.slicePos, 0, 1, (v) => `${Math.round(v * 100)}%`, (v) => this.patch({ slicePos: v }));
     p.slider('Surface level', s.iso, lo, hi, (v) => `${Math.round(v)} ${u}`, (v) => this.patch({ iso: v }));
     const pr = this._info.probe;
-    p.note(pr ? `Probe  ${pr.value.toFixed(this.vol.isCT ? 0 : 1)} ${u}   (${pr.x.toFixed(0)}, ${pr.y.toFixed(0)}, ${pr.z.toFixed(0)}) mm` : 'Probe  point the ray at the scan', pr ? '#2dd4bf' : '#8ea0bd');
+    p.note(pr ? `Probe  ${pr.value.toFixed(this.vol.isCT ? 0 : 1)} ${u}   (${pr.x.toFixed(0)}, ${pr.y.toFixed(0)}, ${pr.z.toFixed(0)}) ${this.lenUnit}` : 'Probe  point the ray at the scan', pr ? '#2dd4bf' : '#8ea0bd');
     const ms = this._info.measurements;
-    p.note(ms.length ? `Ruler  ${ms[ms.length - 1].mm.toFixed(1)} mm  (${ms.length} saved)` : this._info.pendingPoint ? 'Ruler  place the 2nd point' : s.measure ? 'Ruler  trigger to place point 1' : 'Ruler  off', '#facc15');
+    p.note(ms.length ? `Ruler  ${ms[ms.length - 1].mm.toFixed(1)} ${this.lenUnit}  (${ms.length} saved)` : this._info.pendingPoint ? 'Ruler  place the 2nd point' : s.measure ? 'Ruler  trigger to place point 1' : 'Ruler  off', '#facc15');
     p.note('Grip: grab/move · both grips: scale+rotate', '#8ea0bd', 23);
     p.note('R stick: window/level · L stick: clip/slice', '#8ea0bd', 23);
     p.note('A: panel · B: reset · X: ruler · Y: preset', '#8ea0bd', 23);
@@ -1784,6 +1882,56 @@ export class VRScene {
       [
         { label: `Quality: ${s.quality}`, onClick: () => this.cycleQuality() },
         { label: 'Reset view', onClick: () => this.resetView() },
+        { label: s.panelPinned ? 'Unpin panel' : 'Pin panel', active: s.panelPinned, onClick: () => this.setState({ panelPinned: !s.panelPinned }) },
+        { label: 'Swap hands', onClick: () => this.setState({ panelHand: s.panelHand === 'left' ? 'right' : 'left' }) },
+        { label: 'Exit VR', onClick: () => void this.exitXR() },
+      ],
+      2,
+    );
+  }
+
+  private buildStackPanel(p: VRPanel, u: string, lo: number, hi: number) {
+    const s = this._state;
+    const n = this.frameCount;
+    const unit = this.lenUnit;
+    p.column(0);
+    p.header('Display');
+    p.slider('Window', s.width, 1, hi - lo, (v) => `${Math.round(v)} ${u}`, (v) => this.patch({ width: v }));
+    p.slider('Level', s.center, lo, hi, (v) => `${Math.round(v)} ${u}`, (v) => this.patch({ center: v }));
+    if (n > 1) {
+      p.slider('Frame', s.frame, 0, n - 1, (v) => `${Math.round(v) + 1} / ${n}`, (v) => this.setFrame(v));
+      p.slider('Speed', s.fps, 1, 30, (v) => `${Math.round(v)} fps`, (v) => this.patch({ fps: Math.round(v) }));
+      p.buttons(
+        [
+          { label: s.playing ? 'Pause' : 'Play', active: s.playing, onClick: () => this.togglePlay() },
+          { label: '◀ Prev', onClick: () => this.stepFrame(-1) },
+          { label: 'Next ▶', onClick: () => this.stepFrame(1) },
+        ],
+        3,
+      );
+    }
+    const pr = this._info.probe;
+    p.note(pr ? `Probe  ${pr.value.toFixed(0)}   (${pr.x.toFixed(0)}, ${pr.y.toFixed(0)}) ${unit}` : 'Probe  point the ray at the image', pr ? '#2dd4bf' : '#8ea0bd');
+    const ms = this._info.measurements;
+    p.note(ms.length ? `Ruler  ${ms[ms.length - 1].mm.toFixed(1)} ${unit}  (${ms.length} saved)` : this._info.pendingPoint ? 'Ruler  place the 2nd point' : s.measure ? 'Ruler  trigger to place point 1' : 'Ruler  off', '#facc15');
+    p.note('L stick: scroll frames · R stick: window/level', '#8ea0bd', 23);
+    p.note('Grip: move the screen · both grips: scale', '#8ea0bd', 23);
+    p.note(`2D series · ${n} frame${n === 1 ? '' : 's'} · ${this.vol.full.calibrated ? 'calibrated' : 'uncalibrated (px)'}`, '#8ea0bd', 23);
+
+    p.column(1);
+    p.header('Tools');
+    p.buttons(
+      [
+        { label: 'Ruler', active: s.measure, onClick: () => this.setState({ measure: !s.measure }) },
+        { label: 'Clear ruler', onClick: () => this.clearMeasurements() },
+        { label: 'Reset view', onClick: () => this.resetView() },
+        { label: 'Invert', active: s.invert, onClick: () => this.setState({ invert: !s.invert }) },
+      ],
+      2,
+    );
+    p.header('Session');
+    p.buttons(
+      [
         { label: s.panelPinned ? 'Unpin panel' : 'Pin panel', active: s.panelPinned, onClick: () => this.setState({ panelPinned: !s.panelPinned }) },
         { label: 'Swap hands', onClick: () => this.setState({ panelHand: s.panelHand === 'left' ? 'right' : 'left' }) },
         { label: 'Exit VR', onClick: () => void this.exitXR() },
@@ -1904,6 +2052,15 @@ export class VRScene {
     if (this.disposed) return;
     const dt = Math.min(0.1, this.clock.getDelta());
     const presenting = this.renderer.xr.isPresenting;
+    if (this.isStack && this._state.playing && this.frameCount > 1) {
+      this.cineAcc += dt * this._state.fps;
+      if (this.cineAcc >= 1) {
+        const n = Math.floor(this.cineAcc);
+        this.cineAcc -= n;
+        this.stepFrame(n);
+        if (presenting) this.rebuildPanel();
+      }
+    }
     if (presenting) {
       this.pollGamepads(dt);
       this.updateGrab();
@@ -1935,6 +2092,7 @@ export class VRScene {
     window.clearTimeout(this.surfaceTimer);
     this.renderer.setAnimationLoop(null);
     this.ro.disconnect();
+    if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     void this.exitXR();
     this.controls.dispose();
     this.clearMeasurements();

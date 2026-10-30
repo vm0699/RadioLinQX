@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { message } from 'antd';
 import { useViewer } from './store';
 import {
   renderStackGrid,
@@ -101,7 +102,11 @@ export function ViewerGrid() {
       coronal: mprRefs.current['MPR_CORONAL'],
     };
     if (s && els.axial && els.sagittal && els.coronal) {
-      void enterMpr(s, { axial: els.axial, sagittal: els.sagittal, coronal: els.coronal });
+      enterMpr(s, { axial: els.axial, sagittal: els.sagittal, coronal: els.coronal }).catch((e) => {
+        console.warn('MPR failed', e);
+        message.warning('MPR needs a multi-slice CT / MR / PET series — this series is 2D. Back to the image stack.');
+        set('mpr', false);
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -113,7 +118,13 @@ export function ViewerGrid() {
       return;
     }
     const s = activeSeries();
-    if (s && vrtRef.current) void enterVrt(s, vrtRef.current, vrtPreset);
+    if (s && vrtRef.current) {
+      enterVrt(s, vrtRef.current, vrtPreset).catch((e) => {
+        console.warn('VRT failed', e);
+        message.warning('3D (VRT) needs a multi-slice CT / MR / PET series — this series is 2D. Back to the image stack.');
+        set('vrt', false);
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 

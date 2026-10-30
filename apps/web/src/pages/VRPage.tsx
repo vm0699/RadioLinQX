@@ -69,14 +69,16 @@ function VRInner() {
         if (!studyUid) throw new Error('Missing study in the URL.');
         const all = await api.listSeriesFor(studyUid);
         const wanted = new Set(seriesParam.split(',').filter(Boolean));
-        const candidates = all
-          .filter((s) => isVolumetric(s) && (wanted.size === 0 || wanted.has(s.seriesInstanceUid)))
-          .sort((a, b) => (b.instanceCount ?? 0) - (a.instanceCount ?? 0));
-        const volumetric = all.filter(isVolumetric);
-        if (!cancelled) setSeriesList(volumetric);
-        const chosen = candidates[0] ?? volumetric[0];
-        if (!chosen) throw new Error('This study has no series that can be shown as a 3D volume (needs a multi-slice CT/MR/PET series).');
+        const pool = all.filter((x) => wanted.size === 0 || wanted.has(x.seriesInstanceUid));
+        const biggest = (arr: SeriesSummary[]) =>
+          [...arr].sort((a, b) => (b.instanceCount ?? 0) - (a.instanceCount ?? 0))[0];
+        // prefer a real 3D volume; otherwise show the 2D series as a virtual screen
+        const chosen =
+          biggest(pool.filter(isVolumetric)) ?? biggest(pool) ?? biggest(all.filter(isVolumetric)) ?? biggest(all);
+        if (!cancelled) setSeriesList(all);
+        if (!chosen) throw new Error('This study has no images.');
         if (!cancelled) setSeriesUid(chosen.seriesInstanceUid);
+        const stack = !isVolumetric(chosen);
 
         let patient = '';
         if (caseId) {
@@ -90,9 +92,16 @@ function VRInner() {
         const headline = [patient, label].filter(Boolean).join(' · ');
         if (!cancelled) setTitle(headline);
 
-        const full = await loadFullVolume(studyUid, chosen.seriesInstanceUid, (f, l) => !cancelled && setProgress({ f, label: l }));
+        const full = await loadFullVolume(
+          studyUid,
+          chosen.seriesInstanceUid,
+          (f, l) => !cancelled && setProgress({ f, label: l }),
+          { stack, modality: chosen.modality },
+        );
         if (cancelled) return;
-        const prepared = await prepareVolume(full, 256, (f, l) => !cancelled && setProgress({ f, label: l }));
+        // 2D series: keep as much in-plane resolution as memory allows
+        const maxDim = stack ? Math.max(192, Math.min(512, Math.floor(Math.sqrt(48e6 / Math.max(2, full.frames))))) : 256;
+        const prepared = await prepareVolume(full, maxDim, (f, l) => !cancelled && setProgress({ f, label: l }));
         if (cancelled || !hostRef.current) return;
         setProgress({ f: 0.97, label: 'Starting renderer…' });
         await new Promise((r) => setTimeout(r, 20));
@@ -117,7 +126,7 @@ function VRInner() {
           seriesUid: chosen.seriesInstanceUid,
           persist,
         });
-        void made.segInit();
+        if (!made.isStack) void made.segInit();
         if (import.meta.env.DEV) (window as unknown as { __vr: VRScene }).__vr = made;
         setScene(made);
         setProgress(null);
@@ -174,7 +183,7 @@ function VRInner() {
             onChange={(v) => navigate(vrUrl(caseId, studyUid, v), { replace: true })}
             options={seriesList.map((s) => ({
               value: s.seriesInstanceUid,
-              label: `${s.modality ?? ''} ${s.seriesDescription ?? ''} (${s.instanceCount})`,
+              label: `${s.modality ?? ''} ${s.seriesDescription ?? ''} (${s.instanceCount})${isVolumetric(s) ? '' : ' · 2D'}`,
             }))}
           />
         )}
@@ -199,7 +208,7 @@ function VRInner() {
       </div>
 
       <div className="vr-body">
-        <aside className="vr-side">{scene ? <Controls scene={scene} /> : <SideSkeleton error={error} />}</aside>
+        <aside className="vr-side">{scene ? (scene.isStack ? <StackControls scene={scene} /> : <Controls scene={scene} />) : <SideSkeleton error={error} />}</aside>
         <main className="vr-stage">
           <div ref={hostRef} className="vr-canvas" />
           {scene && <Overlay scene={scene} />}
@@ -251,7 +260,7 @@ function Overlay({ scene }: { scene: VRScene }) {
           <>
             <b>{info.probe.value.toFixed(scene.volume.isCT ? 0 : 1)}</b> {scene.unitLabel}
             <span className="dim">
-              {'  '}({info.probe.x.toFixed(0)}, {info.probe.y.toFixed(0)}, {info.probe.z.toFixed(0)}) mm
+              {'  '}({info.probe.x.toFixed(0)}, {info.probe.y.toFixed(0)}{scene.isStack ? '' : `, ${info.probe.z.toFixed(0)}`}) {scene.lenUnit}
             </span>
           </>
         ) : (
@@ -260,7 +269,7 @@ function Overlay({ scene }: { scene: VRScene }) {
         {info.measurements.length > 0 && (
           <div className="vr-hud-ruler">
             {info.measurements.slice(-3).map((m, i) => (
-              <span key={i}>📏 {m.mm.toFixed(1)} mm</span>
+              <span key={i}>📏 {m.mm.toFixed(1)} {scene.lenUnit}</span>
             ))}
           </div>
         )}
@@ -269,7 +278,14 @@ function Overlay({ scene }: { scene: VRScene }) {
         )}
       </div>
       {info.busy && <div className="vr-busy">{info.busy}</div>}
-      <div className="vr-hint">Drag to orbit · scroll to zoom · right-drag to pan</div>
+      <div className="vr-hint">
+        {scene.isStack
+          ? 'Scroll / ← → change frame · Space play · Ctrl+scroll zoom · drag to orbit'
+          : 'Drag to orbit · scroll to zoom · right-drag to pan'}
+      </div>
+      {scene.isStack && scene.frameCount > 1 && (
+        <div className="vr-framebadge">Frame {state.frame + 1} / {scene.frameCount}</div>
+      )}
     </>
   );
 }
@@ -594,5 +610,79 @@ function SegSection({ scene }: { scene: VRScene }) {
         </div>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 2D series (XA cine, ultrasound, X-ray …) as a virtual screen
+// ---------------------------------------------------------------------------
+
+function StackControls({ scene }: { scene: VRScene }) {
+  const { state: s, info } = useSyncExternalStore(scene.subscribe, scene.getSnapshot);
+  const { lo, hi } = scene.range;
+  const u = scene.unitLabel;
+  const n = scene.frameCount;
+  const shot = () => {
+    const url = scene.capturePNG();
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'radbridge-2d.png';
+    a.click();
+  };
+  return (
+    <div className="vr-controls">
+      <section>
+        <h4>2D series · virtual screen</h4>
+        <div className="dim">
+          {n} frame{n === 1 ? '' : 's'} · {scene.volume.full.calibrated ? 'calibrated (mm)' : 'uncalibrated — distances in pixels'}
+        </div>
+        {n > 1 && (
+          <>
+            <Row label={`Frame ${s.frame + 1} / ${n}`}>
+              <Slider min={0} max={n - 1} step={1} value={s.frame} onChange={(v) => scene.setFrame(v)} />
+            </Row>
+            <div className="vr-btnrow">
+              <Button size="small" onClick={() => scene.stepFrame(-1)}>◀</Button>
+              <Button size="small" type={s.playing ? 'primary' : 'default'} onClick={() => scene.togglePlay()}>
+                {s.playing ? 'Pause' : 'Play'}
+              </Button>
+              <Button size="small" onClick={() => scene.stepFrame(1)}>▶</Button>
+            </div>
+            <Row label={`Speed ${s.fps} fps`}>
+              <Slider min={1} max={30} step={1} value={s.fps} onChange={(v) => scene.setState({ fps: v })} />
+            </Row>
+          </>
+        )}
+        <Row label={`Window (${u})`}>
+          <Slider min={1} max={hi - lo} step={1} value={Math.min(s.width, hi - lo)} onChange={(v) => scene.setState({ width: v })} />
+        </Row>
+        <Row label={`Level (${u})`}>
+          <Slider min={lo} max={hi} step={1} value={s.center} onChange={(v) => scene.setState({ center: v })} />
+        </Row>
+        <div className="vr-switches">
+          <label><Switch size="small" checked={s.invert} onChange={(v) => scene.setState({ invert: v })} /> Invert</label>
+          <label><Switch size="small" checked={s.measure} onChange={(v) => scene.setState({ measure: v })} /> Ruler (2 clicks)</label>
+        </div>
+        <div className="vr-btnrow">
+          <Button size="small" onClick={() => scene.clearMeasurements()} disabled={!info.measurements.length && !info.pendingPoint}>Clear ruler</Button>
+          <Button size="small" onClick={() => scene.resetView()}>Reset view</Button>
+          <Button size="small" onClick={shot}>PNG</Button>
+        </div>
+      </section>
+      {info.error && <Alert type="error" showIcon message={info.error} style={{ marginBottom: 8 }} />}
+      <section>
+        <h4>In the headset</h4>
+        <ul className="vr-help">
+          <li><b>Left stick</b> scroll frames · <b>Right stick</b> window / level</li>
+          <li><b>Grip</b> moves the screen; <b>both grips</b> scale it</li>
+          <li><b>Trigger</b> clicks the tablet · places ruler points</li>
+          <li><b>A</b> panel · <b>B</b> reset · <b>X</b> ruler</li>
+        </ul>
+        <div className="dim">
+          This is a 2D series, so it is shown on a floating screen. CT / MR / PET series open as a full 3D volume.
+        </div>
+      </section>
+    </div>
   );
 }

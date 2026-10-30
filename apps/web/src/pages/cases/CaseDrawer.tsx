@@ -178,7 +178,7 @@ export function CaseDrawer({
       extra={
         c && (
           <Space>
-            {c.hasImages && onOpenVR && c.imageCount >= 12 && (
+            {c.hasImages && onOpenVR && (
               <Button onClick={() => onOpenVR(c)}>Open in VR / 3D</Button>
             )}
             {c.hasImages && (

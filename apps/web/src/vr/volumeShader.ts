@@ -31,6 +31,7 @@ uniform sampler3D uVol;
 uniform sampler2D uLut;
 uniform sampler3D uMask;   // RG8: R = hidden, G = highlighted (segmentation)
 uniform float uMaskOn;
+uniform float uInvert;     // slice / MIP: invert the grayscale
 uniform vec3  uHiColor;
 uniform float uWinMin;
 uniform float uWinInv;
@@ -117,6 +118,7 @@ void main() {
       sliceDone = true;
       if (uMaskOn < 0.5 || textureLod(uMask, sp, 0.0).r < 0.5) {
         float sv = winMap(textureLod(uVol, sp, 0.0).r);
+        if (uInvert > 0.5) sv = 1.0 - sv;
         acc.rgb += (1.0 - acc.a) * 0.98 * vec3(sv);
         acc.a += (1.0 - acc.a) * 0.98;
         break;
@@ -162,6 +164,7 @@ void main() {
     vec3 sp = vOrigin + rd * tSlice;
     if (uMaskOn < 0.5 || textureLod(uMask, sp, 0.0).r < 0.5) {
       float sv = winMap(textureLod(uVol, sp, 0.0).r);
+      if (uInvert > 0.5) sv = 1.0 - sv;
       acc.rgb += (1.0 - acc.a) * 0.98 * vec3(sv);
       acc.a += (1.0 - acc.a) * 0.98;
     }
@@ -196,6 +199,7 @@ export function createVolumeMaterial(
       uLut: { value: lut },
       uMask: { value: mask },
       uMaskOn: { value: 0 },
+      uInvert: { value: 0 },
       uHiColor: { value: new THREE.Vector3(1, 0.85, 0.2) },
       uWinMin: { value: 0 },
       uWinInv: { value: 1 },
