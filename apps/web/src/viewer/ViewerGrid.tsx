@@ -119,7 +119,10 @@ export function ViewerGrid() {
     }
     const s = activeSeries();
     if (s && vrtRef.current) {
-      enterVrt(s, vrtRef.current, vrtPreset).catch((e) => {
+      // CT presets make an MR scan an opaque red blob — default to an MR preset
+      const preset = (s.modality ?? '').toUpperCase() === 'MR' && vrtPreset.startsWith('CT-') ? 'MR-Default' : vrtPreset;
+      if (preset !== vrtPreset) set('vrtPreset', preset);
+      enterVrt(s, vrtRef.current, preset).catch((e) => {
         console.warn('VRT failed', e);
         message.warning('3D (VRT) needs a multi-slice CT / MR / PET series — this series is 2D. Back to the image stack.');
         set('vrt', false);
