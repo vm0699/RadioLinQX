@@ -1,0 +1,9 @@
+{
+  "studyDescription": "MRI Abdomen — multi-phase (pre / post-contrast / delayed)",
+  "bodyParts": ["Abdomen"],
+  "contrast": "Yes",
+  "patientHistory": "Multi-phase abdominal MRI (public TCGA demo dataset) — pre-contrast, post-contrast and delayed series.",
+  "remarks": "Multi-series demo study: 4 coronal 3D VIBE phases, 2 axial T1 VIBE, 1 axial T2 TSE. Open the 3D view and pick a series to compare phases.",
+  "tags": ["Teaching file"],
+  "seriesOrder": [7, 9, 10, 12, 8, 11, 6]
+}
