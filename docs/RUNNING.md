@@ -34,7 +34,7 @@ You should see `API listening on :3000`. Check:
 
 ```bash
 curl http://localhost:3000/api/mode            # -> {"mode":"local"}
-curl http://localhost:3000/api/cases/stats     # -> {"all":144,"reported":76,"pending":68}
+curl http://localhost:3000/api/cases/stats     # -> {"all":145,"reported":76,"pending":69}
 ```
 
 ### 3. Start the web app
@@ -133,7 +133,7 @@ bash scripts/reset-data.sh      # or just: rm -rf data
 # then restart the API
 ```
 
-The seed is deterministic — you always get the same 144 cases (6 real,
+The seed is deterministic — you always get the same 145 cases (7 real,
 viewer-linked + ~138 synthetic spread over 45 days).
 
 ---

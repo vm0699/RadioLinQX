@@ -1392,6 +1392,19 @@ export class VRScene {
     return this.isStack ? [0, 0, 1.25] : [0.35, 0.2, 1.05];
   }
 
+  /** Desktop orbit view, so another series of the same patient can open at the same angle. */
+  getView(): { cam: number[]; target: number[] } | null {
+    if (this.renderer.xr.isPresenting) return null;
+    return { cam: this.camera.position.toArray(), target: this.controls.target.toArray() };
+  }
+
+  setView(v: { cam: number[]; target: number[] }) {
+    if (this.renderer.xr.isPresenting) return;
+    this.camera.position.fromArray(v.cam);
+    this.controls.target.fromArray(v.target);
+    this.controls.update();
+  }
+
   resetView() {
     if (this.renderer.xr.isPresenting) {
       this.model.position.copy(this.homePos);

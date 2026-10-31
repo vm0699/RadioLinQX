@@ -55,6 +55,8 @@ function VRInner() {
   const [title, setTitle] = useState('');
   const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
   const [seriesUid, setSeriesUid] = useState('');
+  // orbit angle of the scene being replaced — a new series of the same study opens at the same angle
+  const carryView = useRef<{ study: string; view: { cam: number[]; target: number[] } } | null>(null);
 
   // ---- load → prepare → scene ------------------------------------------------
   useEffect(() => {
@@ -67,7 +69,18 @@ function VRInner() {
     (async () => {
       try {
         if (!studyUid) throw new Error('Missing study in the URL.');
-        const all = await api.listSeriesFor(studyUid);
+        const listed = await api.listSeriesFor(studyUid);
+        // list the series in the case's preferred order (its default 3D series first)
+        let pref: string[] = [];
+        if (caseId) {
+          try {
+            pref = (await api.getCase(caseId)).seriesInstanceUids ?? [];
+          } catch {
+            /* keep the study's own order */
+          }
+        }
+        const rank = (uid: string) => (pref.includes(uid) ? pref.indexOf(uid) : pref.length);
+        const all = [...listed].sort((a, b) => rank(a.seriesInstanceUid) - rank(b.seriesInstanceUid));
         const wanted = new Set(seriesParam.split(',').filter(Boolean));
         const pool = all.filter((x) => wanted.size === 0 || wanted.has(x.seriesInstanceUid));
         const biggest = (arr: SeriesSummary[]) =>
@@ -88,7 +101,9 @@ function VRInner() {
             /* header only */
           }
         }
-        const label = chosen.seriesDescription || chosen.modality || 'Series';
+        const label =
+          (chosen.seriesNumber != null && chosen.seriesDescription ? `#${chosen.seriesNumber} ` : '') +
+          (chosen.seriesDescription || chosen.modality || 'Series');
         const headline = [patient, label].filter(Boolean).join(' · ');
         if (!cancelled) setTitle(headline);
 
@@ -126,6 +141,7 @@ function VRInner() {
           seriesUid: chosen.seriesInstanceUid,
           persist,
         });
+        if (carryView.current?.study === studyUid) made.setView(carryView.current.view);
         if (!made.isStack) void made.segInit();
         if (import.meta.env.DEV) (window as unknown as { __vr: VRScene }).__vr = made;
         setScene(made);
@@ -140,6 +156,8 @@ function VRInner() {
 
     return () => {
       cancelled = true;
+      const view = made?.getView();
+      if (view) carryView.current = { study: studyUid, view };
       made?.dispose();
     };
   }, [studyUid, seriesParam, caseId]);
@@ -208,7 +226,16 @@ function VRInner() {
       </div>
 
       <div className="vr-body">
-        <aside className="vr-side">{scene ? (scene.isStack ? <StackControls scene={scene} /> : <Controls scene={scene} />) : <SideSkeleton error={error} />}</aside>
+        <aside className="vr-side">
+          {seriesList.length > 1 && (
+            <SeriesList
+              list={seriesList}
+              current={seriesUid}
+              onPick={(uid) => navigate(vrUrl(caseId, studyUid, uid), { replace: true })}
+            />
+          )}
+          {scene ? (scene.isStack ? <StackControls scene={scene} /> : <Controls scene={scene} />) : <SideSkeleton error={error} />}
+        </aside>
         <main className="vr-stage">
           <div ref={hostRef} className="vr-canvas" />
           {scene && <Overlay scene={scene} />}
@@ -241,6 +268,45 @@ function XRChip({ xr, secure }: { xr: ReturnType<typeof useXRSupport>; secure: b
   if (!secure) return <Tag color="warning">VR needs HTTPS</Tag>;
   if (!xr.available) return <Tag>No WebXR in this browser</Tag>;
   return <Tag color="default">No headset detected</Tag>;
+}
+
+/** Every series of the study — pick one to view it in 3D; the viewing angle carries over. */
+function SeriesList({
+  list,
+  current,
+  onPick,
+}: {
+  list: SeriesSummary[];
+  current: string;
+  onPick: (uid: string) => void;
+}) {
+  return (
+    <section className="vr-series">
+      <h4>Series · {list.length}</h4>
+      <div className="vr-series-list">
+        {list.map((s) => {
+          const vol = isVolumetric(s);
+          return (
+            <button
+              key={s.seriesInstanceUid}
+              className={`vr-series-item${s.seriesInstanceUid === current ? ' active' : ''}`}
+              onClick={() => s.seriesInstanceUid !== current && onPick(s.seriesInstanceUid)}
+              title={s.seriesDescription ?? ''}
+            >
+              <span className="vr-series-mod">{s.modality ?? '—'}</span>
+              <span className="vr-series-text">
+                <span className="vr-series-name">{s.seriesDescription?.trim() || `Series ${s.seriesNumber ?? ''}`}</span>
+                <span className="dim">
+                  {s.seriesNumber != null ? `#${s.seriesNumber} · ` : ''}
+                  {s.instanceCount} {s.instanceCount === 1 ? 'image' : 'slices'} · {vol ? '3D volume' : '2D screen'}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function SideSkeleton({ error }: { error: string | null }) {

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Dropdown, Slider, InputNumber, Select, Popover, Modal, Tooltip } from 'antd';
-import { useViewer, type ProjectionMode, type PrimaryToolKey } from './store';
+import { useViewer, shownVrtUids, canRenderVolume, MAX_VRT, type ProjectionMode, type PrimaryToolKey } from './store';
 import { setPrimaryTool, MEASURE_MENU } from './tools';
 import {
   rotate,
@@ -10,6 +10,8 @@ import {
   stopCine,
   captureViewportPng,
   resetAll,
+  setVrtOrientation,
+  type VrtViewName,
   ENGINE_ID,
 } from './renderingManager';
 import * as csTools from '@cornerstonejs/tools';
@@ -97,8 +99,16 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
   };
   const toggleVrt = () => {
     if (!st.vrt && st.mpr) st.set('mpr', false);
-    st.set('vrt', !st.vrt);
+    // start 3D on the active series (re-selecting it each time keeps the view in sync with the left rail)
+    useViewer.setState({ vrt: !st.vrt, vrtSeries: !st.vrt && vrSeriesUid ? [vrSeriesUid] : [], vrtSpin: false });
   };
+  const volumeSeries = st.series.filter(canRenderVolume);
+  const shown = st.vrt ? shownVrtUids(st) : [];
+  const seriesLabel = (x: (typeof st.series)[number]) =>
+    `${x.seriesNumber != null ? `#${x.seriesNumber} ` : ''}${x.seriesDescription?.trim() || x.modality || 'Series'} (${x.imageIds.length})`;
+  /** side-by-side compare of the first few volumes, or back to one */
+  const toggleCompare = () =>
+    st.set('vrtSeries', shown.length > 1 ? shown.slice(0, 1) : volumeSeries.slice(0, MAX_VRT).map((x) => x.seriesInstanceUid));
 
   const scrollBy = (dx: number) => trackRef.current?.scrollBy({ left: dx, behavior: 'smooth' });
 
@@ -188,7 +198,51 @@ export function Toolbar({ onReport }: { onReport?: () => void }) {
         </div>
 
         {st.vrt ? (
-          <div className="tb-slab">
+          <div className="tb-slab tb-3d">
+            <Select
+              size="small"
+              mode="multiple"
+              value={shown}
+              maxCount={MAX_VRT}
+              maxTagCount="responsive"
+              placeholder="3D series"
+              style={{ width: 230 }}
+              onChange={(v: string[]) => v.length && st.set('vrtSeries', v)}
+              options={volumeSeries.map((x) => ({ value: x.seriesInstanceUid, label: seriesLabel(x) }))}
+              popupMatchSelectWidth={false}
+            />
+            <Tooltip title={volumeSeries.length < 2 ? 'Needs a study with several volume series' : 'Show up to 4 series side by side'}>
+              <span>
+                <TB label="Compare" active={shown.length > 1} disabled={volumeSeries.length < 2} onClick={toggleCompare} />
+              </span>
+            </Tooltip>
+            <Tooltip title="Rotate all 3D views together">
+              <span>
+                <TB label="Link" active={st.vrtLink && shown.length > 1} disabled={shown.length < 2} onClick={() => st.set('vrtLink', !st.vrtLink)} />
+              </span>
+            </Tooltip>
+            <Select
+              size="small"
+              placeholder="View"
+              value={null}
+              onChange={(v) => v && setVrtOrientation(v as VrtViewName)}
+              style={{ width: 92 }}
+              popupMatchSelectWidth={false}
+              options={([
+                { value: 'anterior', label: 'Anterior' },
+                { value: 'posterior', label: 'Posterior' },
+                { value: 'left', label: 'Left' },
+                { value: 'right', label: 'Right' },
+                { value: 'superior', label: 'Superior' },
+                { value: 'inferior', label: 'Inferior' },
+                { value: 'native', label: 'Scan plane' },
+              ] satisfies { value: VrtViewName; label: string }[])}
+            />
+            <Tooltip title="Turntable — auto-rotate">
+              <span>
+                <TB label="Spin" active={st.vrtSpin} onClick={() => st.set('vrtSpin', !st.vrtSpin)} />
+              </span>
+            </Tooltip>
             <Select
               size="small"
               value={st.vrtPreset}

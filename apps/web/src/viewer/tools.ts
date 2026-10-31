@@ -201,4 +201,38 @@ export function setPrimaryTool(toolKey: string): void {
   }
 }
 
+/**
+ * Free the left mouse button of whichever tool holds it (W/L, a measure tool, …) so a mode-specific
+ * tool — 3D rotate — owns it outright. Two tools bound to one button means the wrong one gets the drag.
+ */
+export function releasePrimaryButton(): void {
+  const group = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+  if (!group) return;
+  const options = (group as unknown as { toolOptions?: Record<string, { mode?: string; bindings?: { mouseButton?: number }[] }> })
+    .toolOptions;
+  for (const key of ['WindowLevel', 'Pan', 'Zoom', 'Magnify', 'Crosshairs', ...ANNOTATION_TOOLS]) {
+    const n = resolveToolName(key);
+    const o = n ? options?.[n] : undefined;
+    if (n && o?.mode === 'Active' && o.bindings?.some((b) => b.mouseButton === MouseBindings.Primary)) {
+      try {
+        group.setToolPassive(n);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/** Give the left mouse button back to `toolKey` (no other tool is demoted). */
+export function claimPrimaryButton(toolKey: string): void {
+  const group = ToolGroupManager.getToolGroup(TOOL_GROUP_ID);
+  const n = resolveToolName(toolKey);
+  if (!group || !n) return;
+  try {
+    group.setToolActive(n, { bindings: [{ mouseButton: MouseBindings.Primary }] });
+  } catch {
+    /* ignore */
+  }
+}
+
 export { csToolsEnums };

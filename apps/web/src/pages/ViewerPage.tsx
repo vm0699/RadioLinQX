@@ -52,10 +52,11 @@ export function ViewerPage() {
         }
 
         const mode = await api.getMode();
-        const wanted = new Set(seriesCsv.split(',').filter(Boolean));
+        const order = seriesCsv.split(',').filter(Boolean);
         const allSeries = await api.listSeriesFor(studyUid);
-        const chosen = wanted.size
-          ? allSeries.filter((s) => wanted.has(s.seriesInstanceUid))
+        // keep the order the caller asked for (a case lists its preferred series first)
+        const chosen = order.length
+          ? order.map((uid) => allSeries.find((s) => s.seriesInstanceUid === uid)).filter((s): s is NonNullable<typeof s> => !!s)
           : allSeries;
         if (chosen.length === 0) {
           setError('None of the requested series were found.');

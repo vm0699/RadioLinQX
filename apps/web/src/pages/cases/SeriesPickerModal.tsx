@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Modal, Checkbox, Button, Spin, Empty } from 'antd';
 import { api, type CaseView, type SeriesSummary } from '../../api/client';
+import { isVolumetric, vrUrl } from '../../vr/xr';
 
 export function SeriesPickerModal({
   theCase,
@@ -21,7 +22,11 @@ export function SeriesPickerModal({
     setChecked(new Set());
     api
       .listSeriesFor(theCase.studyInstanceUid)
-      .then((s) => {
+      .then((list) => {
+        // list the series in the case's preferred order (default 3D series first)
+        const pref = theCase.seriesInstanceUids ?? [];
+        const rank = (uid: string) => (pref.includes(uid) ? pref.indexOf(uid) : pref.length);
+        const s = [...list].sort((a, b) => rank(a.seriesInstanceUid) - rank(b.seriesInstanceUid));
         setSeries(s);
         setChecked(new Set(s.map((x) => x.seriesInstanceUid))); // preselect all
       })
@@ -66,10 +71,24 @@ export function SeriesPickerModal({
               <div className="series-thumb">{s.modality ?? '—'}</div>
               <div className="series-meta">
                 <div className="series-title">
+                  {s.seriesNumber != null && s.seriesDescription ? `#${s.seriesNumber} ` : ''}
                   {s.seriesDescription ?? `Series ${s.seriesNumber ?? '?'}`}
                 </div>
-                <div className="dim">{s.instanceCount ?? '?'} image(s)</div>
+                <div className="dim">
+                  {s.instanceCount ?? '?'} image(s){isVolumetric(s) ? ' · 3D volume' : ''}
+                </div>
               </div>
+              {theCase?.studyInstanceUid && (
+                <Button
+                  size="small"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.open(vrUrl(theCase.id, theCase.studyInstanceUid!, s.seriesInstanceUid), '_blank');
+                  }}
+                >
+                  {isVolumetric(s) ? '3D / VR' : 'VR screen'}
+                </Button>
+              )}
             </label>
           ))}
         </div>

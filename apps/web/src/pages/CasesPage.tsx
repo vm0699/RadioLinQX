@@ -150,6 +150,11 @@ export function CasesPage() {
       render: (_, r) => (
         <>
           <Tag>{r.scanType}</Tag> {r.studyDescription ?? r.bodyParts.join(', ')}
+          {r.hasImages && (
+            <div className="dim" style={{ fontSize: 12 }}>
+              {r.imageCount} images · {r.seriesCount} series
+            </div>
+          )}
         </>
       ),
     },

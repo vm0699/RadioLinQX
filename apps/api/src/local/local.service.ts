@@ -10,7 +10,8 @@ export function sampleDir(): string {
 }
 
 let cache: { at: number; data: LocalInstance[] } | null = null;
-const TTL_MS = 5_000;
+// uploads call invalidateScanCache(), so a longer TTL only affects files dropped in by hand
+const TTL_MS = 30_000;
 
 /** Cached recursive scan of sampleDir(). */
 export async function scanDicomInstances(): Promise<LocalInstance[]> {

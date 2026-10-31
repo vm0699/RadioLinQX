@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SeriesSummary } from '../api/client';
+import { isVolumetric } from '../vr/xr';
 
 export type ProjectionMode = 'none' | 'mip' | 'minip' | 'average';
 export type PrimaryToolKey =
@@ -17,6 +18,9 @@ export type PrimaryToolKey =
   | 'ArrowAnnotate'
   | 'Probe'
   | 'Label';
+
+/** most series shown side by side in 3D compare */
+export const MAX_VRT = 4;
 
 export interface LoadedSeries extends SeriesSummary {
   studyInstanceUid: string;
@@ -46,6 +50,12 @@ export interface ViewerState {
   /** 3D volume rendering (VRT) — mutually exclusive with mpr */
   vrt: boolean;
   vrtPreset: string;
+  /** series shown in 3D (1–4, several = side-by-side compare); empty = the active viewport's series */
+  vrtSeries: string[];
+  /** rotating one 3D view rotates all of them */
+  vrtLink: boolean;
+  /** turntable auto-rotation */
+  vrtSpin: boolean;
   projection: ProjectionMode;
   slabThicknessMm: number;
   referenceLines: boolean;
@@ -77,6 +87,9 @@ const initial = {
   mpr: false,
   vrt: false,
   vrtPreset: 'CT-Bone',
+  vrtSeries: [] as string[],
+  vrtLink: true,
+  vrtSpin: false,
   projection: 'none' as ProjectionMode,
   slabThicknessMm: 0.5,
   referenceLines: false,
@@ -118,3 +131,18 @@ export const useViewer = create<ViewerState>((set) => ({
     }),
   reset: () => set({ ...initial }),
 }));
+
+export type VrtSelectionState = Pick<ViewerState, 'series' | 'assignments' | 'activeViewportIndex' | 'vrtSeries'>;
+
+/** Series that can be volume-rendered (multi-slice CT / MR / PET). */
+export const canRenderVolume = (s: LoadedSeries): boolean =>
+  isVolumetric({ modality: s.modality, instanceCount: s.imageIds?.length ?? s.instanceCount });
+
+/** Series rendered in 3D: the explicit selection, else the active viewport's series. */
+export function shownVrtUids(st: VrtSelectionState): string[] {
+  const volumetric = new Set(st.series.filter(canRenderVolume).map((x) => x.seriesInstanceUid));
+  const picked = st.vrtSeries.filter((u) => volumetric.has(u));
+  if (picked.length) return picked.slice(0, MAX_VRT);
+  const active = st.assignments[st.activeViewportIndex] ?? st.series[0]?.seriesInstanceUid;
+  return active && volumetric.has(active) ? [active] : [];
+}

@@ -1,4 +1,6 @@
-import { scanDicomInstances } from '../local/local.service';
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import { scanDicomInstances, sampleDir } from '../local/local.service';
 import { makeRng, pick, pickSome, intBetween, type Rng } from '../seed/rand';
 import type { CaseRecord } from './case.types';
 import type { AppSettings } from '../settings/settings.service';
@@ -158,18 +160,33 @@ export async function seedCases(
     arr.push(i);
     byStudy.set(i.studyInstanceUid, arr);
   }
-  for (const [studyUid, arr] of byStudy) {
+
+  const mkRealCase = async (
+    studyUid: string,
+    arr: typeof instances,
+    uploadedAt: Date,
+    seriesUids: string[],
+  ) => {
     const first = arr[0];
-    const seriesUids = [...new Set(arr.map((i) => i.seriesInstanceUid))];
-    const uploadedAt = new Date(Date.now() - intBetween(rng, 1, 6) * 3600_000);
+    const meta = await readStudyMeta(first.filePath);
     const scanType = first.modality || 'OT';
-    const c = mkCase(
+    const age = parseDicomAge(first.patientAge);
+    return mkCase(
       {
         patientId: first.patientId || String(intBetween(rng, 100000, 999999)),
         patientName: (first.patientName || 'Unknown').replace(/\^/g, ' '),
         patientSex: first.patientSex,
+        ...(age != null ? { patientAge: age } : {}),
         studyDescription:
-          first.studyDescription || first.seriesDescription || studyDescFor(rng, scanType),
+          meta.studyDescription ||
+          first.studyDescription ||
+          first.seriesDescription ||
+          studyDescFor(rng, scanType),
+        ...(meta.bodyParts ? { bodyParts: meta.bodyParts } : {}),
+        ...(meta.contrast ? { contrast: meta.contrast } : {}),
+        ...(meta.patientHistory ? { patientHistory: meta.patientHistory } : {}),
+        ...(meta.remarks != null ? { remarks: meta.remarks } : {}),
+        ...(meta.tags ? { tags: meta.tags } : {}),
         hasImages: true,
         studyInstanceUid: studyUid,
         seriesInstanceUids: seriesUids,
@@ -186,7 +203,20 @@ export async function seedCases(
       uploadedAt,
       scanType,
     );
-    out.push(c);
+  };
+
+  // Multi-series studies are seeded *after* the synthetic history: the seeded RNG
+  // stream (and so every pre-existing case id / patient) stays exactly as it was.
+  const multiSeries: { studyUid: string; arr: typeof instances; seriesUids: string[] }[] = [];
+
+  for (const [studyUid, arr] of byStudy) {
+    const seriesUids = [...new Set(arr.map((i) => i.seriesInstanceUid))];
+    if (seriesUids.length > 1) {
+      multiSeries.push({ studyUid, arr, seriesUids });
+      continue;
+    }
+    const uploadedAt = new Date(Date.now() - intBetween(rng, 1, 6) * 3600_000);
+    out.push(await mkRealCase(studyUid, arr, uploadedAt, seriesUids));
     seq++;
   }
 
@@ -203,7 +233,67 @@ export async function seedCases(
     }
   }
 
+  // --- multi-series showcase studies: newest arrival → first row of the list ---
+  for (const { studyUid, arr, seriesUids } of multiSeries) {
+    const meta = await readStudyMeta(arr[0].filePath);
+    const newest = out.reduce((t, c) => Math.max(t, +new Date(c.uploadedAt)), 0);
+    // a fresh arrival (~5 min ago) that is still guaranteed to sort above everything else
+    const uploadedAt = new Date(
+      Math.min(Date.now(), Math.max(newest + 1000, Date.now() - 5 * 60_000)),
+    );
+    out.push(
+      await mkRealCase(studyUid, arr, uploadedAt, orderSeries(arr, seriesUids, meta.seriesOrder)),
+    );
+    seq++;
+  }
+
   return out.sort(
     (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt),
   );
+}
+
+/** Optional `case.json` next to a sample study's folder — overrides the case's descriptive fields. */
+interface StudyMeta {
+  studyDescription?: string;
+  bodyParts?: string[];
+  contrast?: 'Yes' | 'No';
+  patientHistory?: string;
+  remarks?: string;
+  tags?: string[];
+  /** series numbers in the order they should be listed / opened (first = default for 3D) */
+  seriesOrder?: number[];
+}
+
+async function readStudyMeta(filePath: string): Promise<StudyMeta> {
+  const root = path.resolve(sampleDir());
+  const top = path.relative(root, path.resolve(filePath)).split(path.sep)[0];
+  if (!top || top === '..') return {};
+  try {
+    return JSON.parse(await fs.readFile(path.join(root, top, 'case.json'), 'utf8')) as StudyMeta;
+  } catch {
+    return {}; // no sidecar
+  }
+}
+
+/** Series UIDs ordered by an explicit series-number list, remaining series by number. */
+function orderSeries(
+  arr: { seriesInstanceUid: string; seriesNumber?: number }[],
+  seriesUids: string[],
+  order: number[] = [],
+): string[] {
+  const numberOf = new Map<string, number>();
+  for (const i of arr) numberOf.set(i.seriesInstanceUid, i.seriesNumber ?? 0);
+  const rank = (uid: string) => {
+    const at = order.indexOf(numberOf.get(uid) ?? -1);
+    return at >= 0 ? at : order.length + (numberOf.get(uid) ?? 0);
+  };
+  return [...seriesUids].sort((a, b) => rank(a) - rank(b));
+}
+
+/** DICOM age string ("059Y", "018M", "004W", "010D") → whole years. */
+function parseDicomAge(v?: string): number | undefined {
+  const m = /^(\d{1,3})([DWMY])$/.exec((v ?? '').trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return m[2] === 'Y' ? n : m[2] === 'M' ? Math.floor(n / 12) : 0;
 }

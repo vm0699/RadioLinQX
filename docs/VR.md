@@ -27,6 +27,25 @@ Case drawer ▸ "Open in VR / 3D"      Viewer toolbar ▸ "VR"
 A **"● VR headset ready"** chip appears in the top bar (and a dot on the viewer's **VR** button) the moment a headset is
 connected (`navigator.xr` + `devicechange`).
 
+## Studies with several series
+
+A case can hold many series (e.g. the demo renal MRI: pre-contrast, two post-contrast and a delayed
+coronal 3D phase, two axial T1 and a T2). Every place that shows 3D knows about them:
+
+- **Viewer → VRT** — the left rail switches the rendered series (the viewing angle is kept). **Shift/Ctrl-click**
+  adds series to a side-by-side compare (up to 4); **Compare** in the toolbar picks the first four volumes.
+  With **Link** on, rotating one view rotates all of them (each keeps its own zoom). **View** snaps to
+  Anterior / Posterior / Left / Right / Superior / Inferior / *Scan plane*; **Spin** is a turntable.
+- **VR / 3D page** — a *Series* list at the top of the side panel; picking one reloads the scene at the same
+  orbit angle. The case's preferred series (see `case.json` below) opens first.
+- **Cases → View series** — every series has its own *3D / VR* button.
+
+Segmentations are stored per case and mapped by patient coordinates, so a label map made on one phase is
+resampled onto the other series of the same patient.
+
+Demo data: `sample-data/tcga-renal-mr-multiseries/` (public TCIA/TCGA MRI, 7 series, ~53 MB). A `case.json`
+next to a sample study overrides the seeded case's description, history, tags and `seriesOrder`.
+
 ## Using a headset
 
 ### Meta Quest (2 / 3 / Pro) — standalone

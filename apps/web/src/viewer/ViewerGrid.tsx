@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { message } from 'antd';
-import { useViewer } from './store';
+import { useViewer, shownVrtUids } from './store';
 import {
   renderStackGrid,
   enterMpr,
@@ -8,6 +8,9 @@ import {
   enterVrt,
   exitVrt,
   setVrtPreset,
+  setVrtSpin,
+  linkVrtCameras,
+  vrtPresetFor,
   applySlab,
   applySync,
   setInvert,
@@ -30,6 +33,9 @@ export function ViewerGrid() {
     mpr,
     vrt,
     vrtPreset,
+    vrtSeries,
+    vrtLink,
+    vrtSpin,
     projection,
     slabThicknessMm,
     invert,
@@ -43,7 +49,7 @@ export function ViewerGrid() {
 
   const stackRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const mprRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const vrtRef = useRef<HTMLDivElement | null>(null);
+  const vrtRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const gridRef = useRef<HTMLDivElement | null>(null);
 
   const activeSeries = () => {
@@ -111,29 +117,45 @@ export function ViewerGrid() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  // --- VRT enter/exit ---
+  // --- VRT enter/exit (1–4 series, re-entered when the selection changes) ---
+  const vrtUids = mode === 'vrt' ? shownVrtUids({ series, assignments, activeViewportIndex, vrtSeries }) : [];
+  const vrtKey = vrtUids.join(',');
+
   useEffect(() => {
     if (mode !== 'vrt') {
-      exitVrt();
+      exitVrt(useViewer.getState().primaryTool);
       return;
     }
-    const s = activeSeries();
-    if (s && vrtRef.current) {
-      // CT presets make an MR scan an opaque red blob — default to an MR preset
-      const preset = (s.modality ?? '').toUpperCase() === 'MR' && vrtPreset.startsWith('CT-') ? 'MR-Default' : vrtPreset;
-      if (preset !== vrtPreset) set('vrtPreset', preset);
-      enterVrt(s, vrtRef.current, preset).catch((e) => {
+    const cells = vrtUids
+      .map((uid, i) => ({ element: vrtRefs.current[i], series: series.find((x) => x.seriesInstanceUid === uid) }))
+      .filter((c): c is { element: HTMLDivElement; series: NonNullable<typeof c.series> } => !!c.element && !!c.series);
+    if (!cells.length) return;
+    const preset = vrtPresetFor(cells[0].series, vrtPreset);
+    if (preset !== vrtPreset) set('vrtPreset', preset);
+    enterVrt(cells, preset)
+      .then(() => {
+        linkVrtCameras(useViewer.getState().vrtLink);
+        setVrtSpin(useViewer.getState().vrtSpin);
+      })
+      .catch((e) => {
         console.warn('VRT failed', e);
         message.warning('3D (VRT) needs a multi-slice CT / MR / PET series — this series is 2D. Back to the image stack.');
         set('vrt', false);
       });
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, vrtKey]);
 
   useEffect(() => {
     if (mode === 'vrt') setVrtPreset(vrtPreset);
   }, [mode, vrtPreset]);
+
+  useEffect(() => {
+    if (mode === 'vrt') linkVrtCameras(vrtLink);
+  }, [mode, vrtLink]);
+
+  useEffect(() => {
+    if (mode === 'vrt') setVrtSpin(vrtSpin);
+  }, [mode, vrtSpin]);
 
   // --- Slab / projection ---
   useEffect(() => {
@@ -155,16 +177,36 @@ export function ViewerGrid() {
   }, [mode, sync, layout.rows, layout.cols, assignments]);
 
   if (mode === 'vrt') {
+    const n = Math.max(1, vrtUids.length);
     return (
-      <div className="viewer-grid" ref={gridRef} style={{ gridTemplateColumns: '1fr' }}>
-        <div className="viewport-cell">
-          <div className="viewport-label">3D · {vrtPreset}</div>
-          <div
-            className="cs-viewport"
-            ref={(el) => (vrtRef.current = el)}
-            onContextMenu={(e) => e.preventDefault()}
-          />
-        </div>
+      <div
+        className="viewer-grid"
+        ref={gridRef}
+        style={{
+          gridTemplateColumns: n === 1 ? '1fr' : '1fr 1fr',
+          gridTemplateRows: n > 2 ? '1fr 1fr' : '1fr',
+        }}
+      >
+        {Array.from({ length: n }, (_, i) => {
+          const s = series.find((x) => x.seriesInstanceUid === vrtUids[i]);
+          return (
+            <div
+              key={`${i}-${vrtUids[i] ?? ''}`}
+              className="viewport-cell"
+              style={n === 3 && i === 2 ? { gridColumn: '1 / -1' } : undefined}
+            >
+              <div className="viewport-label">
+                3D · {s ? vrtLabel(s) : ''} · {s ? vrtPresetFor(s, vrtPreset) : vrtPreset}
+                {vrtUids.length > 1 && vrtLink ? ' · linked' : ''}
+              </div>
+              <div
+                className="cs-viewport"
+                ref={(el) => (vrtRefs.current[i] = el)}
+                onContextMenu={(e) => e.preventDefault()}
+              />
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -228,4 +270,9 @@ export function ViewerGrid() {
       })}
     </div>
   );
+}
+
+function vrtLabel(s: { seriesDescription?: string; modality?: string; seriesNumber?: number }): string {
+  const name = s.seriesDescription?.trim() || `${s.modality ?? ''} series`.trim();
+  return s.seriesNumber != null ? `#${s.seriesNumber} ${name}` : name;
 }

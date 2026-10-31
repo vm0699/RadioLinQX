@@ -29,6 +29,7 @@ cases, reporting workflow, referring doctors, settings, notifications.
 | In headset | grab / scale / rotate the scan, wrist tablet, window-level, presets, HU probe, mm ruler, hand pinch |
 | Segmentation | Auto-segment (CT: skin/fat/soft tissue/lungs/bone), point-to-hide, region grow, carve brush, **import organ label maps** (TotalSegmentator/Slicer NIfTI) with per-organ visibility, save to case — [`docs/SEGMENTATION.md`](docs/SEGMENTATION.md) |
 | Conversion | DICOM → **GLB · USDZ · STL · NIfTI** (full-res) in the browser |
+| Multi-series | Switch the 3D series without losing the angle · **side-by-side 3D compare** (up to 4, rotation linked) · view presets (anterior … scan plane) · turntable |
 
 Details, controls and how to test without a headset: [`docs/VR.md`](docs/VR.md).
 
@@ -45,7 +46,8 @@ Details, controls and how to test without a headset: [`docs/VR.md`](docs/VR.md).
 | Chats | Lightweight local placeholder |
 
 Sample data: one viewer-linked case per real DICOM study in `sample-data/`
-(a 384-slice MRI + XA/US/RF demos) plus ~138 synthetic cases over 45 days, from a
+(a 384-slice MRI, XA/US/RF demos, and a **7-series renal MRI** — public TCIA/TCGA data — that is the
+first row of the list) plus ~138 synthetic cases over 45 days, from a
 **deterministic seed**. The dashboard "database" is JSON files under `data/`
 (git-ignored); `scripts/reset-data.sh` wipes it.
 

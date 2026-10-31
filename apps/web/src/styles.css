@@ -359,6 +359,7 @@ a { color: var(--primary); }
 }
 .series-tile:hover { border-color: var(--border-strong); }
 .series-tile.in-use { border-color: var(--primary); }
+.series-tile.disabled { opacity: 0.45; cursor: not-allowed; }
 .series-tile-thumb {
   position: relative; height: 76px; background: #0a0f1c; border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
@@ -429,7 +430,7 @@ a { color: var(--primary); }
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; color: var(--text-2); flex-shrink: 0;
 }
-.series-meta { min-width: 0; }
+.series-meta { min-width: 0; flex: 1; }
 .series-title { font-weight: 600; }
 
 /* ================================================================
@@ -447,7 +448,7 @@ a { color: var(--primary); }
 }
 .vr-canvas { position: absolute; inset: 0; }
 .vr-controls section { margin-bottom: 18px; }
-.vr-controls h4 {
+.vr-controls h4, .vr-series h4 {
   margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
 }
 .vr-row { margin-top: 10px; }
@@ -494,3 +495,20 @@ a { color: var(--primary); }
   background: rgba(8, 14, 28, .82); border: 1px solid var(--border-strong); font-size: 12px; color: var(--text);
   pointer-events: none;
 }
+
+/* VR page: series list */
+.vr-series { margin-bottom: 14px; }
+.vr-series-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.vr-series-item {
+  display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 9px; color: var(--text); cursor: pointer;
+}
+.vr-series-item:hover { border-color: var(--border-strong); }
+.vr-series-item.active { border-color: var(--primary); background: rgba(59, 130, 246, 0.12); }
+.vr-series-mod {
+  width: 34px; height: 34px; border-radius: 6px; background: #0a0f1c; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; color: var(--text-2);
+}
+.vr-series-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.vr-series-name { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
