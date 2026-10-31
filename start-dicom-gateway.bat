@@ -1,8 +1,9 @@
 @echo off
-title RadioLinQ DICOM Gateway (C-STORE SCP)
+title WeLink DICOM Gateway (C-STORE SCP)
 cd /d "%~dp0"
 echo.
-echo  Starting RadioLinQ DICOM Gateway...
+echo  ============================================================
+echo               WeLink DICOM Edge Gateway
 echo  ============================================================
 echo  Keep this window OPEN while sending scans from the modality.
 echo.

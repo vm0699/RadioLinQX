@@ -1,0 +1,14 @@
+{
+  "name": "welink-dicom-gateway",
+  "version": "1.0.0",
+  "description": "WeLink DICOM Edge Gateway - Receives C-STORE from modalities and ingests to cloud PACS",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dcmjs-dimse": "^0.3.4",
+    "form-data": "^4.0.0"
+  }
+}
