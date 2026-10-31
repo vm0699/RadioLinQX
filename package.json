@@ -3,7 +3,14 @@
   "private": true,
   "description": "WeScan Monorepo Root",
   "scripts": {
+    "gateway": "node scripts/dicom-gateway.js",
+    "dicom-gateway": "node scripts/dicom-gateway.js",
     "word-sync": "node scripts/word-agent.js",
     "word-agent": "node scripts/word-agent.js"
+  },
+  "dependencies": {
+    "axios": "^1.21.0",
+    "dcmjs-dimse": "^0.3.4",
+    "form-data": "^4.0.6"
   }
 }

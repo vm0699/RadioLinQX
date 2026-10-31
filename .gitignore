@@ -33,3 +33,6 @@ apps/api/data/
 
 # runtime DICOM uploads (never commit patient data)
 sample-data/uploads/
+
+# DICOM gateway buffer
+gateway-buffer/
